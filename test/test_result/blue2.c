@@ -18,6 +18,37 @@
 
 static int base_fd = -1;
 
+// 블랙리스트 생성(해당 이름의 파일을 차단)
+static const char *blacklist[] = {
+    "/ransomware.exe",
+    NULL // 목록 끝을 표시
+};
+
+// 쓰기 전용 화이트리스트 생성(일종의 낚시 파일을 제외한 리스트)
+static const char *writable_whitelist[] = {
+    "/text.txt",  //일반적인 파일 지정
+    NULL 
+};
+
+// 해당 파일이 블랙리스트에 포함되는지 확인
+static int is_blacklisted(const char *path) {
+    for (int i = 0; blacklist[i] != NULL; i++) {
+        if (strcmp(path, blacklist[i]) == 0) {
+            return 1; // 차단
+        }
+    }
+    return 0; // 허용
+}
+
+// 해당 파일이 화이트리스트에 존재하는 파일인지 점검
+static int is_writable_whitelisted(const char *path) {
+    for (int i = 0; writable_whitelist[i] != NULL; i++) {
+        if (strcmp(path, writable_whitelist[i]) == 0) {
+            return 1; // 쓰기 허용
+        }
+    }
+    return 0; // 쓰기 차단
+}
 
 // PID별 Malice Score, 행동 정보 저장할 구조체
 typedef struct {
@@ -106,6 +137,15 @@ static int myfs_getattr(const char *path, struct stat *stbuf,
     res = fstatat(base_fd, relpath, stbuf, AT_SYMLINK_NOFOLLOW);
     if (res == -1)
         return -errno;
+    
+    // 블랙리스트 기반 차단
+    if ((stbuf->st_mode & S_IFREG) && (stbuf->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
+        // 블랙리스트에 존재 여부 검사
+        if (is_blacklisted(path)) {
+            // 존재하면 실행에 대한 권한 강제 제거
+            stbuf->st_mode &= ~(S_IXUSR | S_IXGRP | S_IXOTH);
+        }
+    }
 
     return 0;
 }
@@ -150,6 +190,14 @@ static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 // open 함수 구현
 static int myfs_open(const char *path, struct fuse_file_info *fi) {
+    // 쓰기 검사 구현
+    if ((fi->flags & O_WRONLY) || (fi->flags & O_RDWR)) {
+        // 화이트리스트에 있는지 확인
+        if (!is_writable_whitelisted(path)) {
+            return -EACCES; //없다면 접근 거부
+        }
+    }
+
     int res;
     char relpath[PATH_MAX];
     get_relative_path(path, relpath);
@@ -164,6 +212,11 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
 
 // create 함수 구현
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    // 쓰기(생성) 차단
+    if (!is_writable_whitelisted(path)) {
+        return -EACCES; 
+    }
+
     int res;
     char relpath[PATH_MAX];
     get_relative_path(path, relpath);
@@ -191,6 +244,11 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset,
 // write 함수 구현
 static int myfs_write(const char *path, const char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi) {
+    // 화이트리스트 체크
+    if (!is_writable_whitelisted(path)) {
+        return -EACCES; // 화이트리스트에 없으면 접근 거부
+    }
+    
     // PID 획득
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
@@ -235,6 +293,11 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
 
 // unlink 함수 구현 (파일 삭제)
 static int myfs_unlink(const char *path) {
+    // 화이트리스트 체크
+    if (!is_writable_whitelisted(path)) {
+        return -EACCES; // 화이트리스트에 없으면 삭제 거부
+    }
+    
     struct fuse_context *context = fuse_get_context(); //(새로추가) -> PID 획득
     pid_t current_pid = context->pid;
     
@@ -287,6 +350,11 @@ static int myfs_rmdir(const char *path) {
 
 // rename 함수 구현 (파일/디렉터리 이름 변경)
 static int myfs_rename(const char *from, const char *to, unsigned int flags) {
+    // to 경로에 대한 화이트리스트 체크 (화이트리스트 파일로만 이름 변경 허용)
+    if (!is_writable_whitelisted(to)) {
+        return -EACCES; // 목적지 경로가 화이트리스트에 없으면 거부
+    }
+    
     struct fuse_context *context = fuse_get_context(); //(새로추가) -> PID 획득
     pid_t current_pid = context->pid;
 
@@ -394,5 +462,3 @@ int main(int argc, char *argv[]) {
     close(base_fd);
     return ret;
 }
-
-
