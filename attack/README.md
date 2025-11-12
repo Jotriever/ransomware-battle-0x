@@ -1,15 +1,111 @@
-# RED1 - System Security Team Project
+# RED1 — System Security Team Project (Academic Ransomware Simulation)
 
-This repository contains code developed for a team project in the System Security course at Dankook University.
+본 저장소는 단국대학교 시스템보안 과목의 팀 프로젝트(방어: FUSE 기반, 공격: 랜섬웨어 시뮬레이션)의 일환으로 작성된, 학술·연구 목적의 랜섬웨어 동작 모델을 담고 있습니다. 이 코드는 파일 시스템 내 파일을 탐색하여 AES-256-CBC로 암호화하고, 필요 시 복호화하는 흐름을 연구용으로 재현합니다.
+
+중요: 현재 `src` 내 코드에는 FUSE 파일시스템 연동 로직이 포함되어 있지 않습니다. 디렉터리 트래버설과 암·복호화 코어를 모듈화하여, 별도 FUSE 레이어에서 재사용할 수 있도록 구성되어 있습니다.
 
 <br>
 
-> ⚠️ **WARNING: CRITICAL DISCLAIMER** ⚠️
->
-> All code in this repository is an **academic-purpose ransomware** developed for a team project in the Dankook University System Security course (FUSE-based defensive team vs. ransomware offensive team).
->
-> This code must be used for **educational and research purposes ONLY** and must be executed *exclusively* in a **controlled, isolated environment (e.g., a Virtual Machine)**.
->
-> **Using or distributing this code for any malicious purpose or to cause harm to others is strictly prohibited.**
->
-> The developers assume no liability and are not responsible for any legal or ethical issues arising from the use of this code, and provide no warranty against any damages.
+> ⚠️ 법적·윤리적 고지 (반드시 준수) ⚠️
+> - 이 코드는 교육·연구 목적에서만 사용해야 하며, 반드시 격리된 안전한 환경(예: 스냅샷 가능한 가상머신, 완전히 분리된 테스트 디렉터리)에서만 다뤄야 합니다.
+> - 실제 운영 데이터·시스템에 대한 사용, 제3자에게 피해를 유발하는 행위, 악의적 배포·활용은 엄격히 금지됩니다.
+> - 본 저장소의 작성자·기여자는 본 코드를 사용함으로써 발생할 수 있는 모든 법적·윤리적 문제, 손해에 대해 책임을 지지 않습니다. 어떠한 보증도 제공하지 않습니다.
+
+<br>
+
+## 목적과 범위
+- 연구·교육용으로 파일 암호화/복호화의 동작 특성을 관찰하고, 방어측(예: FUSE 기반 감시/차단)에서 탐지 포인트를 식별하기 위함입니다.
+- 실제 공격 도구가 아닌, 모듈화된 “행위 모델”과 실험용 코드입니다.
+- 안전을 위해 파괴적 행위를 최소화하는 구성을 권장합니다(아래 “안전 수칙” 참고).
+
+<br>
+
+## 안전 수칙(필독)
+- 격리 환경에서만 다루십시오: 네트워크 차단, 스냅샷 활성화, 테스트 전용 사용자/디렉터리.
+- 실제 문서, 사진, 업무·개인 데이터가 있는 경로를 대상으로 지정하지 마십시오.
+- 검증 전에는 “비파괴 모드”로 실험하십시오:
+  - `src/file_ops.c`의 원본 파일 삭제 구문 `remove(path_buffer);`를 비활성화하면(주석 처리 등) 암호문 생성만 확인할 수 있습니다.
+- 키/IV 하드코딩 금지: 현재 코드는 연구 편의를 위해 고정 키/IV를 사용합니다. 실제 환경에서는 금지이며, 키 관리는 별도 안전 설계가 필요합니다.
+- 오용을 방지하기 위해 실행 가능한 바이너리/스クリ프트의 외부 배포를 금지하십시오.
+
+<br>
+
+## 아키텍처 개요
+- `src/main.c`  
+  - 진입점. 모드 인자에 따라 디렉터리 순회 함수를 호출합니다.  
+  - 모드: `-e`(암호화), `-d`(복호화).  
+  - 경로: 시작 디렉터리(루트) 문자열.
+- `src/file_ops.h` / `src/file_ops.c`  
+  - 재귀적 디렉터리 순회(`traverse_directory`) 구현.  
+  - 일반 파일을 대상으로 암호화/복호화 수행.  
+  - 암호화 시 원본 파일 삭제(`remove`) 로직 포함(실험 시 비활성화 권장).  
+  - 암호화 산출물 확장자: `.enc`(복호화 시 확장자 제거).
+- `src/crypto.h` / `src/crypto.c`  
+  - OpenSSL EVP API 기반 AES-256-CBC 암·복호화 구현.  
+  - 버퍼 단위 스트리밍 업데이트(`EVP_EncryptUpdate`/`EVP_DecryptUpdate`) 및 `Final` 처리.  
+  - 연구 편의상 하드코딩된 256-bit 키와 128-bit IV 사용(실사용 금지).  
+  - 오류는 OpenSSL 에러 스택 출력 후 비정상 종료.
+- `src/utils.h` / `src/utils.c`  
+  - 현재 비어 있음. FUSE 연동 시 유틸 함수 확장에 사용 가능.
+- `Makefile`  
+  - 표준 GCC 툴체인과 OpenSSL 개발 헤더/라이브러리를 전제로 한 빌드 정의.
+  - 대상 실행 파일명: `ransomware` (연구·시뮬레이션용 명칭).
+
+<br>
+
+## 동작 개요(고수준)
+1. 시작 경로부터 디렉터리를 재귀 순회합니다.
+2. 일반 파일을 만나면, 모드에 따라
+   - 암호화: AES-256-CBC로 `<원본경로>.enc`를 생성하고, 원본을 삭제합니다(기본값).  
+   - 복호화: `.enc` 파일을 원 확장자로 복원하고, 암호문 파일을 삭제합니다.
+3. `.enc` 확장자는 암호화 대상에서 제외하여 이중 암호화를 방지합니다.
+
+주의: 파일 삭제/교체가 포함되어 데이터 손실 위험이 있습니다. 반드시 테스트 더미 데이터셋으로만 검증하십시오.
+
+<br>
+
+## 방어 관점에서의 관찰 포인트
+- 대량의 파일 핸들 오픈/쓰기 패턴, 동일 디렉터리 내 `.enc` 확장자 급증.
+- OpenSSL EVP 호출 시퀀스 및 블록 단위 쓰기 패턴.
+- 원본 파일 삭제 호출(`remove`) 직후의 파일시스템 이벤트.
+- FUSE/커널 감시에서의 연속적인 rename/delete/write 이벤트 상관분석.
+
+<br>
+
+## 제한 사항 및 알려진 이슈
+- FUSE 통합 미구현: 현재 코드는 사용자 영역 디렉터리 순회 기반입니다. FUSE 상의 in-flight I/O 후킹은 포함되지 않습니다.
+- 키·IV 하드코딩: 연구 편의 목적. 생산·현업 환경에서는 부적절합니다.
+- 오류 처리: OpenSSL 오류 시 비정상 종료 경향(테스트 목적상 단순화).
+- 파일 권한/속성 보존 미지원: 메타데이터 유지/복원 로직이 없습니다.
+- 대용량 파일/심볼릭 링크/특수 파일에 대한 정책은 단순화되어 있습니다.
+
+<br>
+
+## 실험 환경 권고(비침투적 지침)
+- 스냅샷 가능한 VM(예: VirtualBox/VMware)에서 네트워크를 비활성화하고, 테스트 전용 사용자·폴더를 만드십시오.
+- 수십~수백 개의 더미 파일(문서·이미지 모의 데이터)로 구성된 전용 디렉터리를 준비하십시오.
+- 최초 실험은 반드시 “비파괴 모드”(원본 삭제 비활성화)로 동작을 검증한 다음 진행하십시오.
+- 방어 실험의 경우, 별도 FUSE 레이어 또는 EDR/파일시스템 감시로 이벤트를 수집·상관분석하십시오.
+
+<br>
+
+## FUSE 통합 가이드라인(개요)
+- 현재 `file_ops`/`crypto` 모듈을 FUSE 파일시스템 콜백(read, write, rename, unlink 등)에서 호출 가능하도록 어댑트하십시오.
+- in-flight 암호화는 성능·일관성 이슈가 있으므로, 메타데이터 저널링/트랜잭션 설계를 고려하십시오.
+- 방어 연구 목적이라면, FUSE 상에서 특정 패턴(대량 쓰기 + `.enc` 생성 + 원본 삭제)을 탐지·차단하는 프로토타입을 작성하십시오.
+
+<br>
+
+## 라이선스 및 책임 한계
+- 본 저장소의 모든 코드는 “있는 그대로” 제공되며, 어떠한 형태의 보증도 제공하지 않습니다.
+- 악의적 사용, 제3자 피해, 데이터 손실 등 모든 결과에 대한 책임은 전적으로 사용 당사자에게 있습니다.
+- 법적 제한을 준수하고, 연구 윤리를 최우선으로 준수하십시오.
+
+<br>
+
+## 기여
+이 저장소는 교육·연구 목적의 데모로서 최소한의 구현을 제공합니다. 안전을 최우선으로 하여 다음 영역의 기여를 환영합니다.
+- FUSE 연동 레이어(비파괴 모드 기본값)
+- 메타데이터 보존/복원, 오류 복구(rollback) 설계
+- 키 관리/회수 시뮬레이션(연구용 안전 장치 포함)
+- 방어·탐지 규칙 및 벤치마크 시나리오
