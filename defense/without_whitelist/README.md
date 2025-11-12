@@ -94,6 +94,10 @@ Red Team 코드(`main.c`, `file_ops.c`, `crypto.c`)는 다음과 같은 암호�
 `#define ENTROPY_DELTA_THRESHOLD 3.0`  // 변화량이 3.0 이상인 경우 <br>
 `#define HIGH_ENTROPY_FLOOR 6.0`   // (오탐 방지용 기준선) // 새 데이터의 엔트로피가 6.0 이상인 경우 <br>
 
+---
+### 빌드 방법
+gcc blue2.c analyzer.c entropy.c -o my_ransom_guard -lfuse3 -lm
+
 <!-- 레드팀이 엔트로피와 malice_score 관련해서 공격 할 수 있는 방법 (생각나는 대로 그때그때 적어놓기)
 (1)레드팀이 파일을 덮어쓰는게 아니라 create로 새로 만든 후 원본을 지워버리면 ? - 파일이 생성되는 것까지는 막지 않지만 빈 파일(엔트로피 0.0) 에 암호화된 데이터 (엔트로피 높음, ~7.9) 을 넣으면 
 델타 검사: if (delta 7.9 > 3.0 && new_entropy 7.9 > 6.0) 에서 막혀서 악성코드로 판정됨 -->
