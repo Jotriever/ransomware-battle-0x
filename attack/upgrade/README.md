@@ -142,3 +142,17 @@ python3 upgrade/join_entropy_csv.py before.csv after.csv -o entropy_diff.csv --s
 ## 주의
 - before/after 모두 같은 루트 디렉터리에 대해 스냅샷을 만들어야 상대경로 키가 일치합니다.
 - 원본 삭제 정책 등으로 인해 매칭되지 않는 항목은 결과에서 제외될 수 있습니다.
+
+## end-to-end 
+### 1) 테스트 데이터 생성
+python .\upgrade\auto_making_victim_file.py ".\dataset"
+
+### 2) 사전 스냅샷
+python .\upgrade\entropy_snapshot.py ".\dataset" -o ".\before.csv"
+
+## (여기서 사용자/툴이 파일들을 암호화하고 *.enc 확장자를 추가했다고 가정)
+### 3) 사후 스냅샷
+python .\upgrade\entropy_snapshot.py ".\dataset" -o ".\after.csv"
+
+### 4) 조인 및 변화량 계산
+python .\upgrade\join_entropy_csv.py ".\before.csv" ".\after.csv" -o ".\entropy_diff.csv"
