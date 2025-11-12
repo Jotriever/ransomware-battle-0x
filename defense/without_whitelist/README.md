@@ -71,11 +71,10 @@ Red Team 코드(`main.c`, `file_ops.c`, `crypto.c`)는 다음과 같은 암호�
 * **WEIGHT_MALICIOUS_LOW (2점):**
     * **대상:** read, open, getattr, readdir, create, mkdir 등
     * **의미:** 저위험 '정찰(Reconnaissance)' 행위. Red Team의 `traverse_directory` 스캔 공격을 탐지 `150 / 2 = 75`번 반복 시 차단
- 
-* 
+  
 
 ---
 
-<-- 레드팀이 엔트로피와 malice_score 관련해서 공격 할 수 있는 방법 (생각나는 대로 그때그때 적어놓기)
+<!-- 레드팀이 엔트로피와 malice_score 관련해서 공격 할 수 있는 방법 (생각나는 대로 그때그때 적어놓기)
 (1)레드팀이 파일을 덮어쓰는게 아니라 create로 새로 만든 후 원본을 지워버리면 ? - 파일이 생성되는 것까지는 막지 않지만 빈 파일(엔트로피 0.0) 에 암호화된 데이터 (엔트로피 높음, ~7.9) 을 넣으면 
 델타 검사: if (delta 7.9 > 3.0 && new_entropy 7.9 > 6.0) 에서 막혀서 악성코드로 판정됨 -->
