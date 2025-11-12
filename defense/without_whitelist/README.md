@@ -12,7 +12,7 @@
         1.  `fuse_get_context()`로 **PID 획득**.
         2.  **PID 기반 "회계 장부"** (`g_score_table`)를 관리하며 `update_malice_score`로 점수 누적
         3.  `KILL_THRESHOLD` (**150점**)를 기준으로 `kill(pid, SIGKILL)` **명령 실행**.
-        4.  `myfs_write`에서 `pread`를 실행해 '원본 데이터'(`old_buf`)를 A-Team에 전달
+        4.  `myfs_write`에서 `pread`를 실행해 '원본 데이터'(`old_buf`)를 전달
 
 * analyzer.c
     * **역할:** **점수 계산기** (Stateless).
