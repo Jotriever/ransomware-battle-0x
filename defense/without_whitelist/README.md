@@ -17,6 +17,7 @@
 * analyzer.c
     * **역할:** **점수 계산기** 
     * **핵심 기능:** get_score()  함수가 모든 방어 로직 (엔트로피, 변화량, 크기, 행위)을 계산하여 점수를 반환. 모든 '가중치'(`WEIGHT_...`)가 여기에 정의되어 있음
+    * **[핵심]** '엔트로피 변화량'(Delta) 값을 받기 위해, 함수 인자를 `(const char* new_buf, const char* old_buf_or_null)`로 나누어 받도록 수정됨.
 
 * entropy.c 
     * **역할:** calculate_entropy() 함수를 제공
