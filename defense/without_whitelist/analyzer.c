@@ -54,6 +54,7 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     //삭제, 이름변경 시 10점 부여(고위험)
     } else if (strcmp(operation, "UNLINK") == 0 || strcmp(operation, "RENAME") == 0) {
         score_to_add += WEIGHT_MALICIOUS;
+		
    //나머지 행위들에 대해 2점 부여(저위험) -> 이 행위들에 대해 가중치를 높여버리면 너무 쉽게 점수가 누적돼서 함부로 건드리기 애매함..
     } else if (strcmp(operation, "READ") == 0 ||
                strcmp(operation, "OPEN") == 0 ||
