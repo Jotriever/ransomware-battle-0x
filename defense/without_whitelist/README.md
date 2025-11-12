@@ -75,6 +75,24 @@ Red Team 코드(`main.c`, `file_ops.c`, `crypto.c`)는 다음과 같은 암호�
 
 ---
 
+### 실제 코드 내의 가중치 및 임계치
+/* analyzer.c */ <br>
+##### 1. 내용 기반 <br>
+`#define WEIGHT_WRITE 1`          // **기본 쓰기 (반복 누적용) 시 1점** <br>
+
+##### 2. 행위 기반 <br>
+`#define WEIGHT_MALICIOUS 10`      // (고위험) **삭제/이름변경 (반복 누적용)시 10점** (150점 / 10회) <br>
+`#define WEIGHT_MALICIOUS_LOW 2`   // (저위험) **읽기/스캔/생성 (반복 누적용)시 2점** (150점 / 75회) <br>
+
+##### 3. 맥락 기반 (즉시 차단 <br>
+`#define WEIGHT_LARGE_WRITE 150`   // (저엔트로피 DoS)<br>
+`#define LARGE_WRITE_THRESHOLD (10* 1024 * 1024)` **10MB 이상 덮어쓰면 150점** <br>
+
+##### 4. 변화량 기반 (즉시 차단) <br>
+`#define WEIGHT_DELTA_ENTROPY 150` // (고엔트로피 암호화)**기존 엔트로피에서 새로운 엔트로피를 계산했을 때 변화량이 3.0인경우 && 새 데이터가 6.0 인경우 150점** <br>
+`#define ENTROPY_DELTA_THRESHOLD 3.0`  // 변화량이 3.0 이상인 경우 <br>
+`#define HIGH_ENTROPY_FLOOR 6.0`   // (오탐 방지용 기준선) // 새 데이터의 엔트로피가 6.0 이상인 경우 <br>
+
 <!-- 레드팀이 엔트로피와 malice_score 관련해서 공격 할 수 있는 방법 (생각나는 대로 그때그때 적어놓기)
 (1)레드팀이 파일을 덮어쓰는게 아니라 create로 새로 만든 후 원본을 지워버리면 ? - 파일이 생성되는 것까지는 막지 않지만 빈 파일(엔트로피 0.0) 에 암호화된 데이터 (엔트로피 높음, ~7.9) 을 넣으면 
 델타 검사: if (delta 7.9 > 3.0 && new_entropy 7.9 > 6.0) 에서 막혀서 악성코드로 판정됨 -->
