@@ -1,5 +1,4 @@
 #define FUSE_USE_VERSION 35
-#define MAX_TRACKED_PIDS 100
 #include <fuse3/fuse.h>
 #include <stdio.h>
 #include <stdlib.h>     // realpath 함수 사용을 위해 추가
@@ -14,214 +13,16 @@
 #include <signal.h>
 #include <sys/types.h>
 #include "analyzer.h" // 스코어 계산하는 함수
+#include "extension_checker.h" // 확장자 검사 모듈
+#include "file_size_tracker.h" // 파일 크기 추적 모듈
+#include "logger.h" // 로깅 모듈
+#include "pattern_detector.h" // 구간별 엔트로피 패턴 감지 모듈
+#include "whitelist.h" // 화이트리스트 관리 모듈
+#include "dummy_file.h" // 더미 파일 관리 모듈
+#include "process_tracker.h" // PID 추적 및 Malice Score 관리 모듈
 #define KILL_THRESHOLD 80    // Malice Score 강제 종료 임계값 ((임시))
 
 static int base_fd = -1;
-
-// 동적 화이트리스트 구조
-#define MAX_WHITELIST_SIZE 10000  // 최대 화이트리스트 항목 수
-static char **writable_whitelist = NULL;
-static int whitelist_count = 0;
-static int whitelist_capacity = 0;
-
-// 더미 파일(낚시 파일) 목록 구조
-static char **dummy_file_list = NULL;
-static int dummy_file_count = 0;
-static int dummy_file_capacity = 0;
-
-// 화이트리스트에 경로 추가
-static int add_to_whitelist(const char *path) {
-    // 중복 체크
-    for (int i = 0; i < whitelist_count; i++) {
-        if (strcmp(path, writable_whitelist[i]) == 0) {
-            return 0; // 이미 존재
-        }
-    }
-    
-    // 용량 부족 시 확장
-    if (whitelist_count >= whitelist_capacity) {
-        int new_capacity = whitelist_capacity == 0 ? 100 : whitelist_capacity * 2;
-        if (new_capacity > MAX_WHITELIST_SIZE) {
-            new_capacity = MAX_WHITELIST_SIZE;
-        }
-        
-        char **new_list = realloc(writable_whitelist, new_capacity * sizeof(char*));
-        if (new_list == NULL) {
-            fprintf(stderr, "Error: Failed to allocate memory for whitelist\n");
-            return -1;
-        }
-        writable_whitelist = new_list;
-        whitelist_capacity = new_capacity;
-    }
-    
-    // 경로 복사 및 추가
-    writable_whitelist[whitelist_count] = strdup(path);
-    if (writable_whitelist[whitelist_count] == NULL) {
-        fprintf(stderr, "Error: Failed to allocate memory for whitelist entry\n");
-        return -1;
-    }
-    whitelist_count++;
-    
-    return 0;
-}
-
-// 더미 파일 목록에 추가하는 함수
-static int add_to_dummy_list(const char *path) {
-    // 중복 체크
-    for (int i = 0; i < dummy_file_count; i++) {
-        if (strcmp(path, dummy_file_list[i]) == 0) {
-            return 0; // 이미 존재
-        }
-    }
-    
-    // 용량 부족 시 확장
-    if (dummy_file_count >= dummy_file_capacity) {
-        int new_capacity = dummy_file_capacity == 0 ? 10 : dummy_file_capacity * 2;
-        char **new_list = realloc(dummy_file_list, new_capacity * sizeof(char*));
-        if (new_list == NULL) {
-            fprintf(stderr, "Error: Failed to allocate memory for dummy file list\n");
-            return -1;
-        }
-        dummy_file_list = new_list;
-        dummy_file_capacity = new_capacity;
-    }
-    
-    // 경로 복사 및 추가
-    dummy_file_list[dummy_file_count] = strdup(path);
-    if (dummy_file_list[dummy_file_count] == NULL) {
-        fprintf(stderr, "Error: Failed to allocate memory for dummy file entry\n");
-        return -1;
-    }
-    dummy_file_count++;
-    
-    return 0;
-}
-
-// 더미 파일인지 확인
-static int is_dummy_file(const char *path) {
-    for (int i = 0; i < dummy_file_count; i++) {
-        if (strcmp(path, dummy_file_list[i]) == 0) {
-            return 1; // 더미 파일
-        }
-    }
-    return 0; // 더미 파일 아님
-}
-
-// 더미 파일 접근 시 프로세스 차단그러
-static void block_process_on_dummy_access(const char *path) {
-    struct fuse_context *context = fuse_get_context();
-    if (context) {
-        pid_t current_pid = context->pid;
-        fprintf(stderr, "ALERT: Dummy file access detected! PID %d accessing %s - KILLING PROCESS\n", 
-                current_pid, path);
-        
-        // 프로세스 강제 종료
-        if (kill(current_pid, SIGKILL) == -1) {
-            fprintf(stderr, "Kill command failed: %s\n", strerror(errno));
-        }
-    }
-}
-
-// 해당 파일이 화이트리스트에 등록되어 있는지 확인
-static int is_writable_whitelisted(const char *path) {
-    // 화이트리스트 배열에 등록된 파일만 허용
-    for (int i = 0; i < whitelist_count; i++) {
-        if (strcmp(path, writable_whitelist[i]) == 0) {
-            return 1; // 화이트리스트에 등록된 파일 - 쓰기 허용
-        }
-    }
-    return 0; // 화이트리스트에 없는 파일 - 쓰기 차단
-}
-
-// 화이트리스트 메모리 해제
-static void free_whitelist(void) {
-    if (writable_whitelist != NULL) {
-        for (int i = 0; i < whitelist_count; i++) {
-            free(writable_whitelist[i]);
-        }
-        free(writable_whitelist);
-        writable_whitelist = NULL;
-        whitelist_count = 0;
-        whitelist_capacity = 0;
-    }
-    
-    // 더미 파일 목록 메모리 해제
-    if (dummy_file_list != NULL) {
-        for (int i = 0; i < dummy_file_count; i++) {
-            free(dummy_file_list[i]);
-        }
-        free(dummy_file_list);
-        dummy_file_list = NULL;
-        dummy_file_count = 0;
-        dummy_file_capacity = 0;
-    }
-}
-
-// PID별 Malice Score, 행동 정보 저장할 구조체
-typedef struct {
-    pid_t pid;             
-    int malice_score;      
-    time_t last_write_time; // 마지막 쓰기 연산 시간 
-    char proc_name[32];  //  프로세스 이름 저장
-} ProcessScore;
-
-// 전역 Score 테이블
-ProcessScore g_score_table[MAX_TRACKED_PIDS];
-int g_process_count = 0; // 현재 추적 중인 프로세스 개수
-
-// ProcessScore 엔트리를 찾거나 새로 생성해 포인터 반환
-ProcessScore* find_or_create_score_entry(pid_t pid) {
-    // 기존 엔트리 검색
-    for (int i = 0; i < g_process_count; i++) {
-        if (g_score_table[i].pid == pid) {
-            // PID가 이미 존재하면 해당 엔트리 반환
-            return &g_score_table[i];
-	}
-    }
-    
-    // 새 엔트리 생성
-    if (g_process_count < MAX_TRACKED_PIDS) {
-        ProcessScore *new_entry = &g_score_table[g_process_count];
-        // 새로운 엔트리 초기화
-        new_entry->pid = pid;
-        new_entry->malice_score = 0;
-        new_entry->last_write_time = time(NULL);
-        g_process_count++; // 추적 중인 프로세스 수 증가
-        
-        return new_entry;
-    }
-    
-    // 배열이 가득 찼을 때 
-    fprintf(stderr, "오류: 최대 PID 추적 개수 초과!\n");
-    return NULL;
-}
-
-// 특정 PID의 Malice Score 업데이트, 마지막 쓰기 시간 갱신
-void update_malice_score(pid_t pid, int added_score) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    
-    if (entry) {
-        entry->malice_score += added_score;
-        entry->last_write_time = time(NULL); 
-    }
-}
-
-// 특정 PID의 Malice Score 반환
-int get_malice_score(pid_t pid) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    if (entry) {
-        return entry->malice_score;
-    }
-    return 0; // 엔트리 못 찾으면 0점 반환
-}
-
-// 프로세스 종료 시 Score 0으로 초기화
-void reset_malice_score(pid_t pid) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    if (entry) {
-        entry->malice_score = 0;
-    }
-}
 
 static void get_relative_path(const char *path, char *relpath) {
     if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
@@ -231,72 +32,6 @@ static void get_relative_path(const char *path, char *relpath) {
             path++;
         strncpy(relpath, path, PATH_MAX);
     }
-}
-
-// 재귀적으로 디렉토리를 스캔하여 모든 파일을 화이트리스트에 추가
-static void scan_directory_recursive(const char *base_path, const char *relative_path) {
-    char full_path[PATH_MAX];
-    char fuse_path[PATH_MAX];
-    struct stat st;
-    DIR *dir;
-    struct dirent *entry;
-    
-    // 전체 경로 구성
-    if (strcmp(relative_path, ".") == 0) {
-        snprintf(full_path, PATH_MAX, "%s", base_path);
-        snprintf(fuse_path, PATH_MAX, "/");
-    } else {
-        snprintf(full_path, PATH_MAX, "%s/%s", base_path, relative_path);
-        snprintf(fuse_path, PATH_MAX, "/%s", relative_path);
-    }
-    
-    // 디렉토리 열기
-    dir = opendir(full_path);
-    if (dir == NULL) {
-        return; // 권한 없음 등으로 열 수 없으면 무시
-    }
-    
-    // 디렉토리 내 항목 순회
-    while ((entry = readdir(dir)) != NULL) {
-        // . 과 .. 건너뛰기
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        
-        char entry_full_path[PATH_MAX];
-        char entry_relative_path[PATH_MAX];
-        char entry_fuse_path[PATH_MAX];
-        
-        // 전체 경로 구성
-        snprintf(entry_full_path, PATH_MAX, "%s/%s", full_path, entry->d_name);
-        
-        // 상대 경로 구성
-        if (strcmp(relative_path, ".") == 0) {
-            snprintf(entry_relative_path, PATH_MAX, "%s", entry->d_name);
-        } else {
-            snprintf(entry_relative_path, PATH_MAX, "%s/%s", relative_path, entry->d_name);
-        }
-        
-        // FUSE 경로 구성 (화이트리스트에 추가할 경로)
-        snprintf(entry_fuse_path, PATH_MAX, "/%s", entry_relative_path);
-        
-        // 파일 정보 가져오기
-        if (stat(entry_full_path, &st) == -1) {
-            continue; // stat 실패 시 건너뛰기
-        }
-        
-        // 파일이면 화이트리스트에 추가
-        if (S_ISREG(st.st_mode)) {
-            add_to_whitelist(entry_fuse_path);
-            fprintf(stderr, "INFO: Added to whitelist: %s\n", entry_fuse_path);
-        }
-        // 디렉토리면 재귀 호출
-        else if (S_ISDIR(st.st_mode)) {
-            scan_directory_recursive(base_path, entry_relative_path);
-        }
-    }
-    
-    closedir(dir);
 }
 
 // getattr 함수 구현
@@ -310,6 +45,15 @@ static int myfs_getattr(const char *path, struct stat *stbuf,
     res = fstatat(base_fd, relpath, stbuf, AT_SYMLINK_NOFOLLOW);
     if (res == -1)
         return -errno;
+    
+    // 파일 크기 추적: 일반 파일인 경우 원본 크기 저장 (아직 추적되지 않은 경우)
+    if (S_ISREG(stbuf->st_mode)) {
+        FileSizeEntry *entry = find_or_create_file_size_entry(path);
+        if (entry != NULL && entry->is_tracked == 0) {
+            entry->original_size = stbuf->st_size;
+            entry->is_tracked = 1;
+        }
+    }
     
     // 화이트리스트에 없는 파일의 실행 권한 제거
     if (S_ISREG(stbuf->st_mode) && (stbuf->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
@@ -438,6 +182,20 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     
+    // 1. 랜섬웨어 확장자 감지
+    if (is_ransomware_extension(path)) {
+        log_kill_ransomware_extension(current_pid, path, "파일 쓰기 (WRITE)", NULL);
+        
+        // 프로세스 강제 종료
+        if (kill(current_pid, SIGKILL) == -1) {
+            log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+        } else {
+            log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
+        }
+        
+        return -EIO;
+    }
+    
     // Score 계산 및 갱신 -> (수정사항: get_score() 함수 사용함
     int added_score = get_score("WRITE", buf, size);
 
@@ -446,11 +204,14 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     
     // 임계값 확인 후 강제 종료 조치
     if (get_malice_score(current_pid) >= KILL_THRESHOLD) {
-        fprintf(stderr, "Kill ! 'write' 임계값 초과! PID %d 강제 종료\n", current_pid);
+        int current_score = get_malice_score(current_pid);
+        log_kill_malice_score(current_pid, current_score, KILL_THRESHOLD, path, "파일 쓰기 (WRITE)", NULL);
         
         // 강제 종료 실행
         if (kill(current_pid, SIGKILL) == -1) {
-            fprintf(stderr, "킬 명령어 실패: %s\n", strerror(errno));
+            log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+        } else {
+            log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
         }
 
         // 쓰기 연산 차단 및 에러 반환
@@ -463,6 +224,29 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     if (res == -1) {
         res = -errno;
     }
+    
+    // 2. 파일 크기 변화 분석 (쓰기 후 현재 파일 크기 확인)
+    if (res > 0) {
+        struct stat st;
+        char relpath[PATH_MAX];
+        get_relative_path(path, relpath);
+        
+        if (fstatat(base_fd, relpath, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+            check_file_size_change(path, st.st_size, current_pid);
+            
+            // 3. 구간별 엔트로피 패턴 감지 (4번 이상 반복 시 강제 종료)
+            if (detect_entropy_pattern(path, base_fd, current_pid)) {
+                // 패턴이 4번 이상 반복되면 프로세스 강제 종료
+                if (kill(current_pid, SIGKILL) == -1) {
+                    log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+                } else {
+                    log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
+                }
+                return -EIO;
+            }
+        }
+    }
+    
     return res;
 }
 
@@ -493,11 +277,15 @@ static int myfs_unlink(const char *path) {
     update_malice_score(current_pid, added_score); //(새로추가) -> 추가하기
    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {//(if 문 전체 새로 추가)
-	    fprintf(stderr, "Kill ! 'unlink' 임계값 초과! PID %d 강제종료\n", current_pid);
-	    if(kill(current_pid,SIGKILL) == -1){
-		    fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
-	    }
-	    return -EIO;
+        int current_score = get_malice_score(current_pid);
+        log_kill_malice_score(current_pid, current_score, KILL_THRESHOLD, path, "파일 삭제 (UNLINK)", NULL);
+        
+        if(kill(current_pid,SIGKILL) == -1){
+            log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+        } else {
+            log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
+        }
+        return -EIO;
     }
     int res;
     char relpath[PATH_MAX];
@@ -549,15 +337,33 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     struct fuse_context *context = fuse_get_context(); //(새로추가) -> PID 획득
     pid_t current_pid = context->pid;
 
+    // 1. 랜섬웨어 확장자 감지 (이름 변경 후 확장자 확인)
+    if (is_ransomware_extension(to)) {
+        log_kill_ransomware_extension(current_pid, to, "파일 이름 변경 (RENAME)", from);
+        
+        // 프로세스 강제 종료
+        if (kill(current_pid, SIGKILL) == -1) {
+            log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+        } else {
+            log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
+        }
+        
+        return -EIO;
+    }
+
     int added_score = get_score("RENAME", NULL, 0); //(새로추가) -> score 계산 (buf/size 가 없으므로 NULL,0 을 전달)
     update_malice_score(current_pid, added_score); //(새로추가) -> 추가하기
 
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {//(if 문 전체 새로 추가)
-            fprintf(stderr, "Kill ! 'rename' 임계값 초과! PID %d 강제종료\n", current_pid);
-            if(kill(current_pid,SIGKILL) == -1){
-                    fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
-            }
-            return -EIO;
+        int current_score = get_malice_score(current_pid);
+        log_kill_malice_score(current_pid, current_score, KILL_THRESHOLD, to, "파일 이름 변경 (RENAME)", from);
+        
+        if(kill(current_pid,SIGKILL) == -1){
+            log_message("❌ 킬 명령어 실패: %s\n", strerror(errno));
+        } else {
+            log_message("✅ 프로세스 PID %d 강제 종료 완료\n", current_pid);
+        }
+        return -EIO;
     }
     int res;
     char relfrom[PATH_MAX];
@@ -571,6 +377,9 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     res = renameat(base_fd, relfrom, base_fd, relto);
     if (res == -1)
         return -errno;
+
+    // 파일 크기 추적 엔트리 경로 업데이트 (rename 시)
+    update_file_size_entry_path(from, to);
 
     return 0;
 }
@@ -627,10 +436,17 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    // 로거 초기화 (환경 변수로 로그 파일 경로 설정 가능)
+    const char *log_file = getenv("DEFENSE_LOG_FILE");
+    if (init_logger(log_file) != 0) {
+        fprintf(stderr, "Warning: Logger initialization failed, continuing without file logging\n");
+    }
+    
     // 백엔드 경로는 고정: $HOME/workspace/target
     const char *home_dir = getenv("HOME");
     if (!home_dir) {
         fprintf(stderr, "Error: HOME environment variable not set.\n");
+        close_logger();
         free(mountpoint);
         return -1;
     }
@@ -652,6 +468,7 @@ int main(int argc, char *argv[]) {
     base_fd = open(backend_path_resolved, O_RDONLY | O_DIRECTORY);
     if (base_fd == -1) {
 	perror("Error opening backend directory");
+	close_logger();
 	free(mountpoint);
 	return -1;
     }
@@ -659,7 +476,7 @@ int main(int argc, char *argv[]) {
     // 백엔드 디렉토리의 모든 파일을 화이트리스트에 자동 등록
     fprintf(stderr, "INFO: Scanning directory and building whitelist...\n");
     scan_directory_recursive(backend_path_resolved, ".");
-    fprintf(stderr, "INFO: Whitelist initialized with %d files\n", whitelist_count);
+    fprintf(stderr, "INFO: Whitelist initialized with %d files\n", get_whitelist_count());
     
     // 더미 파일(낚시 파일) 생성 및 등록
     fprintf(stderr, "INFO: Creating dummy files for ransomware detection...\n");
@@ -697,14 +514,16 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "INFO: Dummy file already exists: %s\n", dummy_files[i]);
         }
     }
-    fprintf(stderr, "INFO: Dummy file list initialized with %d files\n", dummy_file_count);
+    fprintf(stderr, "INFO: Dummy file list initialized with %d files\n", get_dummy_file_count());
 
     // FUSE 파일시스템 실행
     int ret = fuse_main(args.argc, args.argv, &myfs_oper, NULL);
 
     // 정리
     free_whitelist();
+    free_dummy_list();
     close(base_fd);
+    close_logger(); // 로거 닫기
     free(mountpoint);
     return ret;
 }
