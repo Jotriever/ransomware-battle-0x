@@ -1,0 +1,48 @@
+1
+00:00:01,000 --> 00:00:04,000
+Hello, and welcome to our sample movie.
+
+2
+00:00:05,000 --> 00:00:09,000
+This is a demonstration of the SRT subtitle format,
+which is widely used for video subtitling.
+
+3
+00:00:10,000 --> 00:00:15,000
+SRT files contain numbered subtitle sequences
+with start and end timestamps.
+
+4
+00:00:16,000 --> 00:00:20,000
+Each subtitle can span multiple lines
+and includes timing information.
+
+5
+00:00:21,000 --> 00:00:25,000
+The format is: sequence number,
+followed by the time range,
+followed by the subtitle text.
+
+6
+00:00:26,000 --> 00:00:30,000
+Timestamps are in the format:
+hours:minutes:seconds,milliseconds
+
+7
+00:00:31,000 --> 00:00:35,000
+SRT files are plain text and can be
+created or edited with any text editor.
+
+8
+00:00:36,000 --> 00:00:40,000
+They're compatible with most video players
+and video editing software.
+
+9
+00:00:41,000 --> 00:00:45,000
+You can include formatting like <b>bold</b>,
+<i>italic</i>, or <u>underlined</u> text.
+
+10
+00:00:46,000 --> 00:00:50,000
+Thank you for viewing this sample SRT file!

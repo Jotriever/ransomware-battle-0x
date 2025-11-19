@@ -1,6 +1,5 @@
 /* blue2.c (최종 수정본) */
 #define FUSE_USE_VERSION 35
-#define MAX_TRACKED_PIDS 100
 #include <fuse3/fuse.h>
 #include <stdio.h>
 #include <stdlib.h>     
@@ -14,74 +13,21 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <sys/types.h>
-#include "analyzer.h" 
+#include "analyzer.h"
+#include "process_tracker.h" // PID 추적 및 Malice Score 관리 모듈
+#include "whitelist.h" // 화이트리스트 관리 모듈
 #define KILL_THRESHOLD 100 //malice_score 임계값 (넘으면 강제 종료됨)   
 
 static int base_fd = -1;
 
-// 블랙리스트
+// 블랙리스트 (임시로 유지 - 향후 별도 모듈로 분리 가능)
 static const char *blacklist[] = { "/ransomware.exe", NULL };
-
-// 화이트리스트
-static const char *writable_whitelist[] = { "/text.txt", NULL };
 
 static int is_blacklisted(const char *path) {
     for (int i = 0; blacklist[i] != NULL; i++) {
         if (strcmp(path, blacklist[i]) == 0) return 1;
     }
     return 0; 
-}
-
-static int is_writable_whitelisted(const char *path) {
-    for (int i = 0; writable_whitelist[i] != NULL; i++) {
-        if (strcmp(path, writable_whitelist[i]) == 0) return 1;
-    }
-    return 0; 
-}
-
-typedef struct {
-    pid_t pid;             
-    int malice_score;      
-    time_t last_write_time; 
-    char proc_name[32];  
-} ProcessScore;
-
-ProcessScore g_score_table[MAX_TRACKED_PIDS];
-int g_process_count = 0; 
-
-ProcessScore* find_or_create_score_entry(pid_t pid) {
-    for (int i = 0; i < g_process_count; i++) {
-        if (g_score_table[i].pid == pid) return &g_score_table[i];
-    }
-    if (g_process_count < MAX_TRACKED_PIDS) {
-        ProcessScore *new_entry = &g_score_table[g_process_count];
-        new_entry->pid = pid;
-        new_entry->malice_score = 0;
-        new_entry->last_write_time = time(NULL);
-        g_process_count++; 
-        return new_entry;
-    }
-    fprintf(stderr, "오류: 최대 PID 추적 개수 초과!\n");
-    return NULL;
-}
-
-void update_malice_score(pid_t pid, int added_score) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    if (entry) {
-        entry->malice_score += added_score;
-        entry->last_write_time = time(NULL); 
-    }
-}
-
-int get_malice_score(pid_t pid) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    if (entry) return entry->malice_score;
-    return 0; 
-}
-
-void reset_malice_score(pid_t pid) {
-    ProcessScore *entry = find_or_create_score_entry(pid);
-    if (entry) entry->malice_score = 0;
 }
 
 static void get_relative_path(const char *path, char *relpath) {
