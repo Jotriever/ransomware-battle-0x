@@ -1,117 +1,99 @@
-#include <math.h>
-#include <string.h>
-#include <stddef.h>
+/* analyzer.c (최종 완성본 - 헤더 검사 포함) */
 #include "entropy.h"
 #include "analyzer.h"
-#include <time.h>
-#include <stdio.h>
-#include <unistd.h>
+#include <string.h> // strcmp, memcmp
+#include <stddef.h> // size_t, NULL
+#include <stdio.h> 
 
-//행동(operation) 에 따라 가중치 부여
-//가중치 고려해야 할 점-> red 팀한테 코드 받아보고 평균적인 임계치랑 가중치 점수 수정해야
-#define WEIGHT_WRITE 1 //myfs_write 호출시 기본 점수 1
-#define WEIGHT_MALICIOUS 3 // myfs_unlink 나 _rename 호출시 점수 3 (더 많은 가중치 부여)
-#define WEIGHT_HIGH_ENTROPY 5 // 엔트로피 4.2 이상이면 5점 추가
-#define ENTROPY_THRESHOLD 4.2 // 대략적으로 정한 엔트로피 임계치
+// 1. 내용 기반 가중치
+#define WEIGHT_WRITE 1
+#define WEIGHT_HIGH_ENTROPY 20
+#define ENTROPY_THRESHOLD 4.2
+
+// 2. 행위 기반 가중치
+#define WEIGHT_MALICIOUS 10 
+#define WEIGHT_MALICIOUS_LOW 2 
+
+// 3. 맥락 기반 가중치
+#define WEIGHT_LARGE_WRITE 150
+#define LARGE_WRITE_THRESHOLD (10* 1024 * 1024)
+
+// 4. 변화량/헤더 기반 가중치 (즉시 차단)
+#define WEIGHT_RANSOMWARE_DETECTED 150 
+#define HIGH_ENTROPY_FLOOR 6.0 // 이 값 이상이면 암호화 의심
 
 
-//반복 행위에 대한  (빈도에 따라) 임계치
-#define TIME_SECONDS 1 // 1초ㄷ 단위 검사
-#define WRITE_THRESHOLD_PER_1 100 //1초에 write 100회까지
-#define UNLINK_THRESHOLD_PER_1 10 //1초에 unlink 10회까지
-#define RENAME_THRESHOLD_PER_1 10 //1초에 rename 10회까지
+/**
+ * @brief 데이터 헤더(Magic Number)를 검사하여 알려진 파일 형식인지 확인
+ * (JPG, PNG, ZIP/Office, PDF, MP4, MP3 등)
+ */
+int is_valid_file_header(const char *buf, size_t size) {
+    if (size < 4) return 0; 
 
-//빈도가 임계치 넘었을 때  추가 벌점
-#define PENALTY_HIGH_WRITE 50 // 쓰기 100회 넘었을 때 추가로 벌점 부여
-#define PENALTY_HIGH_UNLINK 100 // 언링크 10회 넘었을 때 추가 벌점
-#define PENALTY_HIGH_RENAME 100
+    // JPG (FF D8 FF)
+    if (size >= 3 && memcmp(buf, "\xFF\xD8\xFF", 3) == 0) return 1;
+    // PNG (89 50 4E 47)
+    if (size >= 4 && memcmp(buf, "\x89\x50\x4E\x47", 4) == 0) return 1;
+    // ZIP, Office (PK..)
+    if (size >= 2 && memcmp(buf, "PK", 2) == 0) return 1;
+    // PDF (%PDF)
+    if (size >= 4 && memcmp(buf, "%PDF", 4) == 0) return 1;
+    // MP4 (ftyp)
+    if (size >= 12 && memcmp(buf + 4, "ftyp", 4) == 0) return 1;
+    // MP3 (ID3)
+    if (size >= 3 && memcmp(buf, "ID3", 3) == 0) return 1;
 
-#define FINAL_MALICE_THRESHOLD 200 // 총 누적 점수가 200이 넘으면 최종 악성 판단
-static int write_count = 0;
-static int unlink_count = 0;
-static int rename_count = 0;
-static int total_malice_score = 0;
-static time_t start_time = 0;
+    return 0; // 알려진 헤더가 아님
+}
 
-int get_score(const char* operation, const char* buf, size_t size) { //operation은 기본함수 구현하는 사람한테 받아와
-        int score_to_add = 0;
 
-        if (strcmp(operation, "WRITE") == 0) {
-                score_to_add += WEIGHT_WRITE; //1점주추가하기
+int get_score(const char* operation, const char* new_buf, const char* old_buf_or_null, size_t size) {
+    int score_to_add = 0;
 
-                if (buf != NULL && size > 0) {
-                        double entropy = calculate_entropy(buf,size); //쓰기 했으니까 검사함
-                        if (entropy > ENTROPY_THRESHOLD) {
-                                score_to_add += WEIGHT_HIGH_ENTROPY; //5점 추가정
+    if (strcmp(operation, "WRITE") == 0) {
+        score_to_add += WEIGHT_WRITE;
 
-                        }
+        // [최종 방어 로직: 고엔트로피 & 헤더 검사]
+        if (new_buf != NULL && size > 0) {
+            
+            double new_entropy = calculate_entropy(new_buf, size);
+            
+            // 1. "지금 쓰려는 데이터"가 암호화 수준(6.0 이상)으로 복잡한가?
+            if (new_entropy > HIGH_ENTROPY_FLOOR) {
+                
+                // 2. 그렇다면, 정상적인 파일 헤더(신분증)가 있는가?
+                if (is_valid_file_header(new_buf, size)) {
+                    // [PASS] "엔트로피는 높지만, JPG/ZIP 신분증이 있으니 정상 파일이다."
+                    // (점수 추가 없음 -> 1점 통과)
+                } 
+                else {
+                    // [BLOCK] "엔트로피가 높은데 신분증도 없다? 이건 100% 랜섬웨어다!"
+                    // (JPG 덮어쓰기 공격도 여기서 걸림)
+                    score_to_add += WEIGHT_RANSOMWARE_DETECTED; // 150점 (즉시 차단)
                 }
-
+            }
         }
-
-        else if (strcmp(operation, "UNLINK") == 0 || strcmp(operation, "RENAME") == 0) {
-
-                score_to_add += WEIGHT_MALICIOUS; //3점 추가
-        }
-
-        return score_to_add; //일단은 쓰기, rename, unlink 만 점수부여 
-}
-
-//총 점수 계산 및 악성인지 판단하기 과정
-static int check_frequency_and_alert(){
-        time_t current_time = time(NULL);
-        int is_malicious = 0;
-
-        if(start_time == 0) {
-                start_time = current_time;
-                return 0 ; // 첫 호출은 1초 대기
-        }
-        // 1초가 안 지났으면 검사 X
-        if (current_time - start_time < TIME_SECONDS){
-                return 0;
-        }
-        // 임계치 넘으면 50점 벌점 추가
-        if (write_count > WRITE_THRESHOLD_PER_1){
-             total_malice_score += PENALTY_HIGH_WRITE;
-        }
-        //임계치 넘으면 100점 벌점 추가
-        if (unlink_count > UNLINK_THRESHOLD_PER_1){
-                total_malice_score += PENALTY_HIGH_UNLINK;
-        }
-        //임계치 넘으면 100점 벌점 추가
-        if (rename_count > RENAME_THRESHOLD_PER_1){
-                total_malice_score += PENALTY_HIGH_RENAME;
-        }
-       // 전체 총합 점수가 임계치 넘으면 악성으로 판
-        if (total_malice_score > FINAL_MALICE_THRESHOLD) {
-                printf("헉!!!!!!");
-                printf("malice detected\n"); //fuse 로부터 전달받아 저장해둔  공격자 pid
-                printf("malice score : %d (threshold: %d)\n", total_malice_score, FINAL_MALICE_THRESHOLD);
-                printf("각 행동 횟수 :(w : %d. U : %d, R:%d)\n", write_count, unlink_count, rename_count);
-
-                is_malicious = 1; // 악성으로 판정
-        }
-        // 다시 다음 1초를 위해 초기화해줌
-        total_malice_score = 0;
-        write_count = 0;
-        unlink_count = 0;
-        rename_count = 0;
-        start_time = current_time;
         
-        return is_malicious;
-}
-
-int monitor_operation(const char* operation, const char* buf, size_t size){
-
-        int content_score = get_score(operation, buf, size); //계산기로 단일 점수 계산
-        total_malice_score += content_score; // 장부에 점수와 횟수 누적
-
-        if (strcmp(operation, "WRITE") == 0) {
-                write_count++;
-        } else if (strcmp(operation, "UNLINK") == 0) {
-                unlink_count++;
-        } else if (strcmp(operation, "RENAME") == 0) {
-                rename_count++;
+        // [방어 2: 대용량 쓰기]
+        if (size > LARGE_WRITE_THRESHOLD) {
+            score_to_add += WEIGHT_LARGE_WRITE; // 150점 (즉시 차단)
         }
-        return check_frequency_and_alert(); //monitor 가 1초마다 검사하고 결과 반환 (악성이면 1)
+
+    } else if (strcmp(operation, "UNLINK") == 0 || strcmp(operation, "RENAME") == 0) {
+        score_to_add += WEIGHT_MALICIOUS;
+
+    } else if (strcmp(operation, "READ") == 0 ||
+               strcmp(operation, "OPEN") == 0 ||
+               strcmp(operation, "GETATTR") == 0 ||
+               strcmp(operation, "READDIR") == 0) {
+        score_to_add += WEIGHT_MALICIOUS_LOW;
+    
+    } else if (strcmp(operation, "CREATE") == 0 ||
+               strcmp(operation, "MKDIR") == 0 ||
+               strcmp(operation, "RMDIR") == 0 ||
+               strcmp(operation, "UTIMENS") == 0) {
+        score_to_add += WEIGHT_MALICIOUS_LOW;
+    }
+
+    return score_to_add;
 }
