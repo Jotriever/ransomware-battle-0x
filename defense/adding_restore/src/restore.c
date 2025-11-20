@@ -1,4 +1,5 @@
 #include "restore.h"
+#include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +8,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <fcntl.h>
-#include <string.h>
 #include <sys/time.h>
 
 //백업dir 절대 주소(restore_init이 생성한) 저장
@@ -30,7 +30,7 @@ int restore_init(const char *home_dir, const char *target_path) {
     // workspace 디렉터리 생성 (혹시 없을때)
     // 권한: 0755 (소유자:rwx, 그룹:r-x, 기타:r-x)
     if (mkdir(workspace_path, 0755) == -1 && errno != EEXIST) {
-        perror("RESTORE: Error creating workspace directory");
+        log_message("RESTORE: Error creating workspace directory: %s\n", strerror(errno));
         return -1;
     }
     
@@ -38,17 +38,17 @@ int restore_init(const char *home_dir, const char *target_path) {
     // 권한: 0700 (소유자:rwx, 그룹:---, 기타:---)
     // -> 랜섬웨어 프로세스(다른 사용자)가 접근하지 못하도록 격리
     if (mkdir(backup_path, 0700) == -1 && errno != EEXIST) {
-        perror("RESTORE: Error creating restore_backup directory");
+        log_message("RESTORE: Error creating restore_backup directory: %s\n", strerror(errno));
         return -1;
     }
 
     //생성된 백업 경로를 전역 변수에 저장 (절대 경로로 변환)
     if (realpath(backup_path, g_backup_dir) == NULL) {
-        perror("RESTORE: 백업 경로 저장에 실패했습니다.");
+        log_message("RESTORE: 백업 경로 저장에 실패했습니다: %s\n", strerror(errno));
         return -1;
     }
     
-    fprintf(stderr, "RESTORE: 백업 경로 초기화 완료: %s\n", g_backup_dir);
+    log_message("RESTORE: 백업 경로 초기화 완료: %s\n", g_backup_dir);
     
     return 0;
 }
@@ -93,7 +93,7 @@ void restore_backup_on_write(const char *path, int base_fd) {
 
     int src_fd = openat(base_fd, relpath, O_RDONLY);
     if (src_fd == -1) {
-        fprintf(stderr, "RESTORE: 경고: 백업 위한 파일 %s 열기 불가: %s\n", relpath, strerror(errno));
+        log_message("RESTORE: 경고: 백업 위한 파일 %s 열기 불가: %s\n", relpath, strerror(errno));
         return;
     }
 
@@ -101,17 +101,17 @@ void restore_backup_on_write(const char *path, int base_fd) {
     int dest_fd = open(backup_filepath, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (dest_fd == -1) {
         close(src_fd);
-        fprintf(stderr, "RESTORE: 경고: 백업파일 생성 불가 %s: %s\n", backup_filepath, strerror(errno));
+        log_message("RESTORE: 경고: 백업파일 생성 불가 %s: %s\n", backup_filepath, strerror(errno));
         return;
     }
 
     //데이터 복사
     if (copy_file_data(src_fd, dest_fd) == 0) {
-        fprintf(stderr, "RESTORE: 오리지널 파일 백업: %s\n", path);
+        log_message("RESTORE: 오리지널 파일 백업: %s\n", path);
     } else {
         // 복사 실패 시 생성된 파일 삭제
         unlink(backup_filepath);
-        fprintf(stderr, "RESTORE: 백업 파일 쓰기 에러: %s\n", path);
+        log_message("RESTORE: 백업 파일 쓰기 에러: %s\n", path);
     }
     close(src_fd);
     close(dest_fd);
@@ -120,7 +120,7 @@ void restore_backup_on_write(const char *path, int base_fd) {
     gettimeofday(&end_time, NULL); 
     long elapsed_us = (end_time.tv_sec - start_time.tv_sec) * 1000000L + 
                       (end_time.tv_usec - start_time.tv_usec);
-    fprintf(stderr, "RESTORE: Backup/CoW time for %s: %ld us\n", path, elapsed_us);
+    log_message("RESTORE: Backup/CoW time for %s: %ld us\n", path, elapsed_us);
 }
 
 //복구 함수
@@ -155,19 +155,19 @@ void restore_backup_file(const char *path, int base_fd) {
 
     struct stat st;
     if (stat(backup_filepath, &st) == -1) {
-        fprintf(stderr, "RESTORE: 복구 실패: 백업 파일 %s 없음\n", backup_filepath);
+        log_message("RESTORE: 복구 실패: 백업 파일 %s 없음\n", backup_filepath);
         return;
     }
 
     //복구 시작 (시간 측정)
     struct timeval start_time, end_time;
     gettimeofday(&start_time, NULL);
-    fprintf(stderr, "RESTORE: 복구 시작... %s\n", path);
+    log_message("RESTORE: 복구 시작... %s\n", path);
 
     //백업 파일 열기 (읽기 전용)
     int src_fd = open(backup_filepath, O_RDONLY);
     if (src_fd == -1) {
-        perror("RESTORE: 복구 실패: 백업 파일 열기 오류");
+        log_message("RESTORE: 복구 실패: 백업 파일 열기 오류: %s\n", strerror(errno));
         return;
     }
 
@@ -177,15 +177,15 @@ void restore_backup_file(const char *path, int base_fd) {
     int dest_fd = openat(base_fd, relpath, O_WRONLY | O_TRUNC | O_CREAT, 0644);
     if (dest_fd == -1) {
         close(src_fd);
-        perror("RESTORE: 복구 실패: 원본 파일 열기 오류");
+        log_message("RESTORE: 복구 실패: 원본 파일 열기 오류: %s\n", strerror(errno));
         return;
     }
 
     //데이터 복사 (복구 실행)
     if (copy_file_data(src_fd, dest_fd) == 0) {
-        fprintf(stderr, "RESTORE: 복구 성공! 파일이 원본으로 복구됨: %s\n", path);
+        log_message("RESTORE: 복구 성공! 파일이 원본으로 복구됨: %s\n", path);
     } else {
-        fprintf(stderr, "RESTORE: 복구 중 데이터 복사 오류: %s\n", path);
+        log_message("RESTORE: 복구 중 데이터 복사 오류: %s\n", path);
     }
 
     close(src_fd);
@@ -195,7 +195,7 @@ void restore_backup_file(const char *path, int base_fd) {
     gettimeofday(&end_time, NULL);
     long elapsed_us = (end_time.tv_sec - start_time.tv_sec) * 1000000L +
                       (end_time.tv_usec - start_time.tv_usec);
-    fprintf(stderr, "RESTORE: 복구 소요 시간: %s: %ld us\n", path, elapsed_us);
+    log_message("RESTORE: 복구 소요 시간: %s: %ld us\n", path, elapsed_us);
 }
 
 
@@ -207,7 +207,7 @@ static int copy_file_data(int src_fd, int dest_fd) {
 
     //원본 파일 포인터를 맨 앞으로
     if (lseek(src_fd, 0, SEEK_SET)==-1){
-        perror("RESTORE: 파일 찾기 오류 발생");
+        log_message("RESTORE: 파일 찾기 오류 발생: %s\n", strerror(errno));
         return -1;
     }
 
@@ -215,13 +215,13 @@ static int copy_file_data(int src_fd, int dest_fd) {
     while ((bytes_read = read(src_fd, chunk, CHUNK_SIZE)) > 0)
     {
         if(write(dest_fd, chunk, bytes_read) != bytes_read){
-            perror("RESTORE: 목표 파일에 쓰기 실패");
+            log_message("RESTORE: 목표 파일에 쓰기 실패: %s\n", strerror(errno));
             return -1;
         }
     }
 
     if (bytes_read == -1) {
-        perror("RESTORE: 파일 읽기 실패");
+        log_message("RESTORE: 파일 읽기 실패: %s\n", strerror(errno));
         return -1; 
     }
     

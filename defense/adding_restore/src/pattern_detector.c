@@ -20,9 +20,11 @@ static void get_relative_path(const char *path, char *relpath) {
     if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
         strcpy(relpath, ".");
     } else {
-        if (path[0] == '/')
-            path++;
-        strncpy(relpath, path, PATH_MAX - 1);
+        if (path[0] == '/') {
+            strncpy(relpath, path + 1, PATH_MAX - 1);
+        } else {
+            strncpy(relpath, path, PATH_MAX - 1);
+        }
         relpath[PATH_MAX - 1] = '\0';
     }
 }

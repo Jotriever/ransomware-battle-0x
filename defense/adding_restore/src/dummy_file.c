@@ -29,7 +29,7 @@ int add_to_dummy_list(const char *path) {
         int new_capacity = dummy_file_capacity == 0 ? 10 : dummy_file_capacity * 2;
         char **new_list = realloc(dummy_file_list, new_capacity * sizeof(char*));
         if (new_list == NULL) {
-            fprintf(stderr, "Error: Failed to allocate memory for dummy file list\n");
+            log_message("Error: Failed to allocate memory for dummy file list\n");
             return -1;
         }
         dummy_file_list = new_list;
@@ -39,7 +39,7 @@ int add_to_dummy_list(const char *path) {
     // 경로 복사 및 추가
     dummy_file_list[dummy_file_count] = strdup(path);
     if (dummy_file_list[dummy_file_count] == NULL) {
-        fprintf(stderr, "Error: Failed to allocate memory for dummy file entry\n");
+        log_message("Error: Failed to allocate memory for dummy file entry\n");
         return -1;
     }
     dummy_file_count++;

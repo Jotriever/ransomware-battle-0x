@@ -2,6 +2,8 @@
 #include <string.h>
 #include <limits.h>
 #include <sys/types.h>
+#include <signal.h>
+#include <errno.h>
 #include "file_size_tracker.h"
 #include "logger.h"
 
@@ -58,8 +60,11 @@ void check_file_size_change(const char *path, off_t current_size, pid_t pid) {
     
     // 4/3배 비율 범위 내인지 확인 (1.23 ~ 1.43)
     if (ratio >= (target_ratio - tolerance) && ratio <= (target_ratio + tolerance)) {
-        log_message("ALERT: 파일 크기 변화 감지! PID %d - 파일: %s, 원본: %ld, 현재: %ld, 비율: %.3f (4/3배 범위)\n",
-                pid, path, entry->original_size, current_size, ratio);
+        // Base64 인코딩 감지 - 프로세스 종료
+        log_kill_file_size_change(pid, path, entry->original_size, current_size, ratio);
+        if (kill(pid, SIGKILL) == -1) {
+            log_message("킬 명령어 실패: %s\n", strerror(errno));
+        }
     }
 }
 
