@@ -143,3 +143,19 @@ void log_kill_entropy_pattern(pid_t pid, const char *path, int pattern_count, in
     log_message("========================================\n\n");
 }
 
+// 파일 크기 변화 감지 킬링 메시지 (Base64 인코딩 감지)
+void log_kill_file_size_change(pid_t pid, const char *path, off_t original_size, off_t current_size, double ratio) {
+    log_message("\n========================================\n");
+    log_message("🚨 PROCESS KILLED - 파일 크기 변화 감지 (Base64 인코딩 의심)\n");
+    log_message("========================================\n");
+    log_message("사유: 파일 크기가 Base64 인코딩 패턴(4/3배 증가)과 일치\n");
+    log_message("PID: %d\n", pid);
+    log_message("파일 경로: %s\n", path);
+    log_message("원본 파일 크기: %ld bytes\n", original_size);
+    log_message("현재 파일 크기: %ld bytes\n", current_size);
+    log_message("크기 증가 비율: %.3f (예상: 1.333)\n", ratio);
+    log_message("작업: 파일 쓰기 (WRITE)\n");
+    log_message("조치: 프로세스 강제 종료 (SIGKILL)\n");
+    log_message("========================================\n\n");
+}
+

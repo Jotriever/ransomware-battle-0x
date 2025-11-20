@@ -1,4 +1,5 @@
 #include "whitelist.h"
+#include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +32,7 @@ int add_to_whitelist(const char *path) {
         
         char **new_list = realloc(writable_whitelist, new_capacity * sizeof(char*));
         if (new_list == NULL) {
-            fprintf(stderr, "Error: Failed to allocate memory for whitelist\n");
+            log_message("Error: Failed to allocate memory for whitelist\n");
             return -1;
         }
         writable_whitelist = new_list;
@@ -41,7 +42,7 @@ int add_to_whitelist(const char *path) {
     // 경로 복사 및 추가
     writable_whitelist[whitelist_count] = strdup(path);
     if (writable_whitelist[whitelist_count] == NULL) {
-        fprintf(stderr, "Error: Failed to allocate memory for whitelist entry\n");
+        log_message("Error: Failed to allocate memory for whitelist entry\n");
         return -1;
     }
     whitelist_count++;
@@ -128,7 +129,7 @@ void scan_directory_recursive(const char *base_path, const char *relative_path) 
         // 파일이면 화이트리스트에 추가
         if (S_ISREG(st.st_mode)) {
             add_to_whitelist(entry_fuse_path);
-            fprintf(stderr, "INFO: Added to whitelist: %s\n", entry_fuse_path);
+            log_message("INFO: Added to whitelist: %s\n", entry_fuse_path);
         }
         // 디렉토리면 재귀 호출
         else if (S_ISDIR(st.st_mode)) {

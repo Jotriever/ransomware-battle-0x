@@ -1,4 +1,5 @@
 #include "process_tracker.h"
+#include "logger.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -29,7 +30,7 @@ static ProcessScore* find_or_create_score_entry(pid_t pid) {
     }
     
     // 배열이 가득 찼을 때 
-    fprintf(stderr, "오류: 최대 PID 추적 개수 초과!\n");
+    log_message("오류: 최대 PID 추적 개수 초과!\n");
     return NULL;
 }
 
