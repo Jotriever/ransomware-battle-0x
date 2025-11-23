@@ -37,7 +37,31 @@ int is_valid_file_header(const char *buf, size_t size) {
     if (size >= 4 && memcmp(buf, "\x89\x50\x4E\x47", 4) == 0) return 1; // PNG
     if (size >= 6 && (memcmp(buf, "GIF87a", 6) == 0 || memcmp(buf, "GIF89a", 6) == 0)) return 1; // GIF
     if (size >= 2 && memcmp(buf, "BM", 2) == 0) return 1; // BMP
-    if (size >= 4 && (memcmp(buf, "II*\x00", 4) == 0 || memcmp(buf, "MM\x00*", 4) == 0)) return 1; // TIF림
+    if (size >= 4 && (memcmp(buf, "II*\x00", 4) == 0 || memcmp(buf, "MM\x00*", 4) == 0)) return 1; // TIF
+
+    // 2. 문서 및 압축 (ZIP, Office, APK, JAR) - 가장 중요!
+    if (size >= 2 && memcmp(buf, "PK", 2) == 0) return 1;
+    // PDF
+    if (size >= 4 && memcmp(buf, "%PDF", 4) == 0) return 1;
+    // HWP
+    if (size >= 8 && memcmp(buf, "\xD0\xCF\x11\xE0", 4) == 0) return 1;
+
+    // 3. 미디어 (MP4, AVI, MP3)
+    if (size >= 12 && memcmp(buf + 4, "ftyp", 4) == 0) return 1; // MP4
+    if (size >= 4 && memcmp(buf, "RIFF", 4) == 0) return 1; // AVI, WAV
+    if (size >= 3 && memcmp(buf, "ID3", 3) == 0) return 1; // MP3
+    if (size >= 2 && (unsigned char)buf[0] == 0xFF && ((unsigned char)buf[1] & 0xE0) == 0xE0) return 1; // MP3 Raw
+
+    // 4. 실행 파일 (ELF)
+    if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1;
+
+    return 0; // 헤더가 없거나 깨짐 (암호화 데이터일 확률 높음)
+}
+
+
+/**
+ * @brief FUSE 연산을 분석하여 악성 점수 반환 (Main Logic)
+ */
 int get_score(const char* operation, const char* new_buf, const char* old_buf_or_null, size_t size) {
     int score_to_add = 0;
 
@@ -47,20 +71,25 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
 
         if (new_buf != NULL && size > 0) {
             
-            // 1. 새로 쓰려는 데이터의 엔트로피 계산
             double new_entropy = calculate_entropy(new_buf, size);
+            double old_entropy = 0.0;
+
+            if (old_buf_or_null != NULL) {
+                old_entropy = calculate_entropy(old_buf_or_null, size);
+            }
+
+            double delta = new_entropy - old_entropy;
             
-            // [수정된 핵심 로직] 
-            // Delta(변화량) 조건은 삭제했습니다. (텍스트 파일 오탐 방지)
-            // 오직 "결과물이 암호화 데이터(7.0 이상)인가?"만 확인합니다.
-            if (new_entropy > HIGH_ENTROPY_FLOOR) {
+            // [핵심 방어 로직]
+            // 1. 엔트로피가 급증했거나(새 파일), 결과물이 매우 높은가(7.0 이상)?
+            if (delta > ENTROPY_DELTA_THRESHOLD || new_entropy > HIGH_ENTROPY_FLOOR) {
                 
-                // 7.0이 넘는 고엔트로피 데이터라면, 정상 파일(JPG, ZIP)인지 신분증 검사
+                // 2. (오탐 방지) 정상적인 파일 헤더가 있는가?
                 if (is_valid_file_header(new_buf, size)) {
-                    // [PASS] 정상 파일임. 점수 부여 안 함.
+                    // [PASS] 엔트로피는 높지만 정상 파일(이미지/압축)임.
                 } 
                 else {
-                    // [BLOCK] 엔트로피는 높은데 신분증이 없다 -> 랜섬웨어!
+                    // [BLOCK] 엔트로피가 높은데 헤더(신분증)가 없다 -> 암호화 데이터!
                     score_to_add += WEIGHT_RANSOMWARE_DETECTED; // 150점 (즉시 차단)
                 }
             }
