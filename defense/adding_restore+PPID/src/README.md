@@ -1,458 +1,260 @@
-# FUSE 기반 파일시스템 보안 솔루션
 
-## 프로젝트 개요
+# 🔐 Blue2 Anti-Ransomware Defense  
+실시간 랜섬웨어 탐지 · PID/PPID 행위 분석 · CoW 기반 자동 복구 시스템
 
-이 프로젝트는 FUSE(Filesystem in Userspace)를 활용한 파일시스템 보안 솔루션입니다. PID(Process ID) 기반으로 프로세스의 행동을 추적하고, 악성 행동을 감지하여 자동으로 차단하는 시스템입니다.
+본 프로젝트는 FUSE 기반 사용자 수준 파일 시스템을 활용해  
+**실시간 랜섬웨어 공격 탐지 및 자동 복구를 수행하는 고급형 방어 시스템**이다.
 
-## 주요 기능
+본 README에서 설명할 부분은
 
-1. **PID 기반 행동 추적**: 각 프로세스의 파일시스템 작업을 추적하고 점수화
-2. **악성 행동 감지**: 쓰기, 삭제, 이름 변경 등의 작업을 분석하여 악성 점수 계산
-3. **엔트로피 분석**: 쓰기 작업의 데이터 엔트로피를 계산하여 암호화된 데이터 감지
-4. **동적 화이트리스트**: 초기화 시점에 백엔드 디렉토리의 모든 파일을 자동으로 화이트리스트에 등록
-5. **더미 파일(낚시 파일)**: 랜섬웨어 탐지를 위한 더미 파일 자동 생성 및 접근 시 프로세스 차단
-6. **실행 권한 제어**: 화이트리스트에 없는 파일의 실행 권한 제거
-7. **자동 차단**: 임계값을 초과한 프로세스 자동 강제 종료
-8. **랜섬웨어 확장자 감지**: 알려진 랜섬웨어 확장자 사용 시 프로세스 즉시 강제 종료
-9. **파일 크기 변화 분석**: Base64 인코딩 감지를 위한 파일 크기 변화 비율 분석 (4/3배 비율 확인)
-10. **구간별 엔트로피 패턴 감지**: 파일 내 반복적인 부분 암호화 패턴 감지 (4번 이상 반복 시 강제 종료)
-11. **로깅 시스템**: 모든 보안 이벤트를 로그 파일에 기록 (기본: `./ransomware_defense.log`)
+1) **Analyzer 기반 행위 스코어링**  
+2) **PID/PPID 이중 행위 기반 탐지 엔진**  
+3) **Copy-on-Write(CoW) 기반 Restore 모듈**
 
-## 파일 구조
+본 README에서 전체 구조와 구현한 주요 기능, 설계 의도 및 개선 포인트를 정리
 
-### `blue2.c`
-메인 FUSE 파일시스템 구현 파일
 
-**주요 기능:**
-- FUSE 파일시스템 연산자 구현 (getattr, readdir, open, create, read, write, unlink, rename 등)
-- PID별 Malice Score 추적 시스템
-- 동적 화이트리스트 시스템
-  - 초기화 시점에 백엔드 디렉토리의 모든 파일을 자동으로 화이트리스트에 등록
-  - 화이트리스트 파일: 모든 작업 허용 (읽기, 쓰기, 삭제, 실행, 이름변경)
-  - 화이트리스트에 없는 파일: 실행만 차단, 나머지 작업 허용
-- 더미 파일(낚시 파일) 시스템
-  - 프로그램 시작 시 더미 파일 자동 생성
-  - 더미 파일 접근 시도 시 프로세스 즉시 강제 종료
-- 랜섬웨어 확장자 감지 (extension_checker 모듈 사용)
-  - `write` 및 `rename` 함수에서 확장자 검사
-  - 랜섬웨어 확장자 발견 시 프로세스 즉시 강제 종료
-- 파일 크기 변화 분석 (file_size_tracker 모듈 사용)
-  - Base64 인코딩 감지를 위한 크기 변화 비율 분석
-- 구간별 엔트로피 패턴 감지 (pattern_detector 모듈 사용)
-  - 파일 내 반복적인 부분 암호화 패턴 감지
-  - 패턴 4번 이상 반복 시 프로세스 강제 종료
-- 로깅 시스템 (logger 모듈 사용)
-  - 모든 보안 이벤트를 로그 파일에 기록
-- 임계값 초과 시 프로세스 강제 종료 (SIGKILL)
+---
 
-**주요 설정:**
-- `MAX_TRACKED_PIDS`: 최대 추적 가능한 PID 개수 (100)
-- `KILL_THRESHOLD`: Malice Score 강제 종료 임계값 (80)
-- `MAX_WHITELIST_SIZE`: 최대 화이트리스트 항목 수 (10000)
-- 백엔드 경로: `$HOME/workspace/target` (고정)
-- 더미 파일 목록: `/dummy_secret.txt`, `/important_data.txt`, `/private_key.pem`, `/backup.db`, `/confidential.doc`
+# 1. Process Tracker (PID/PPID 기반 이중 탐지 엔진)
 
-### `analyzer.c`
-악성 행동 분석 및 점수 계산 모듈
+본 파일은 **PID + PPID 기반 이중 행위 분석 구조**이다.
 
-**주요 기능:**
-- 파일시스템 작업별 가중치 기반 점수 계산
-- 엔트로피 기반 암호화 데이터 감지
-- 시간 단위 빈도 분석 (1초 단위)
-- 악성 행동 판정
+랜섬웨어가 **병렬(child 프로세스)**로 파일을 암호화하여 pid기반 점수체계를 회피하는 것을 방지하기 위해 PPID 그룹 점수 개념을 도입.
 
-**점수 체계:**
-- `WEIGTH_WRITE`: 쓰기 작업 기본 점수 (1점)
-- `WEIGTH_MALICIOUS`: UNLINK/RENAME 작업 점수 (3점)
-- `WEIGHT_HIGH_ENTROPY`: 높은 엔트로피(4.2 이상) 추가 점수 (5점)
-- `ENTROPY_THRESHOLD`: 엔트로피 임계값 (4.2)
+---
 
-**빈도 기반 벌점:**
-- `WRITE_THRESHOLE_PER_1`: 1초당 쓰기 임계값 (100회)
-- `UNLINK_THRESHOLE_PER_1`: 1초당 삭제 임계값 (10회)
-- `RENAME_THRESHOLE_PER_1`: 1초당 이름 변경 임계값 (10회)
-- `PENALTY_HIGh_WRITE`: 쓰기 빈도 초과 시 벌점 (50점)
-- `PENALTY_HIGh_UNLINK`: 삭제 빈도 초과 시 벌점 (100점)
-- `PENALTY_HIGh_RENAME`: 이름 변경 빈도 초과 시 벌점 (100점)
+## 1-1. PID 기반 프로세스 점수 관리
 
-**최종 판정:**
-- `FINAL_MALICE_THRESHOLD`: 최종 악성 판정 임계값 (200점)
-
-**주요 함수:**
-- `get_score(const char* operation, const char* buf, size_t size)`: 작업별 점수 계산
-- `check_frequency_and_alert()`: 빈도 분석 및 악성 판정
-- `monitor_operation(const char* operation, const char* buf, size_t size)`: 작업 모니터링
-
-### `analyzer.h`
-analyzer.c의 헤더 파일
-
-**함수 선언:**
-- `int get_score(const char* operation, const char* buf, size_t size)`
-
-### `entropy.c`
-데이터 엔트로피 계산 모듈
-
-**주요 기능:**
-- Shannon 엔트로피 공식을 사용한 데이터 분석
-- 각 바이트 값의 빈도를 계산하여 데이터의 무작위성 측정
-- 암호화된 데이터나 압축된 데이터 감지에 활용
-
-**함수:**
-- `double calculate_entropy(const char *buffer, size_t size)`: 버퍼의 엔트로피 값 계산 (0.0 ~ 8.0)
-
-**엔트로피 의미:**
-- 낮은 엔트로피 (0.0 ~ 2.0): 반복적인 패턴, 평문 텍스트
-- 중간 엔트로피 (2.0 ~ 4.2): 일반적인 데이터
-- 높은 엔트로피 (4.2 ~ 8.0): 암호화된 데이터, 압축된 데이터, 랜덤 데이터
-
-### `entropy.h`
-entropy.c의 헤더 파일
-
-**함수 선언:**
-- `double calculate_entropy(const char*buffer, size_t size)`
-
-### `extension_checker.c`
-랜섬웨어 확장자 검사 모듈
-
-**주요 기능:**
-- 파일 확장자 추출
-- 알려진 랜섬웨어 확장자 목록과 비교
-- 대소문자 구분 없이 확장자 검사
-
-**랜섬웨어 확장자 목록:**
-- `.encrypted`, `.locked`, `.crypto`, `.vault`, `.locky`, `.zepto`, `.odin`, `.hydra` 등 30개 이상
-
-**주요 함수:**
-- `get_file_extension(const char *path)`: 파일 경로에서 확장자 추출
-- `is_ransomware_extension(const char *path)`: 랜섬웨어 확장자인지 확인
-
-### `extension_checker.h`
-extension_checker.c의 헤더 파일
-
-**함수 선언:**
-- `const char* get_file_extension(const char *path)`
-- `int is_ransomware_extension(const char *path)`
-
-### `file_size_tracker.c`
-파일 크기 추적 및 변화 분석 모듈
-
-**주요 기능:**
-- 파일의 원본 크기 추적
-- 파일 크기 변화 비율 계산
-- Base64 인코딩 감지 (4/3배 비율 확인)
-
-**설정:**
-- `MAX_FILE_SIZE_TRACK`: 최대 추적 가능한 파일 수 (1000개)
-- `target_ratio`: Base64 인코딩 시 크기 증가 비율 (4.0 / 3.0 = 1.333...)
-- `tolerance`: 허용 오차 (0.1 = 10%)
-
-**주요 함수:**
-- `find_or_create_file_size_entry(const char *path)`: 파일 크기 추적 엔트리 찾기/생성
-- `check_file_size_change(const char *path, off_t current_size, pid_t pid)`: 크기 변화 분석 및 알림
-- `update_file_size_entry_path(const char *old_path, const char *new_path)`: 파일 경로 업데이트 (rename 시)
-
-**동작 방식:**
-- `getattr`에서 파일의 원본 크기 저장
-- `write` 후 현재 파일 크기 확인
-- 원본 대비 크기 변화 비율이 1.23 ~ 1.43 범위 내이면 Base64 인코딩으로 의심하여 PID 출력
-
-### `file_size_tracker.h`
-file_size_tracker.c의 헤더 파일
-
-**구조체:**
-- `FileSizeEntry`: 파일 경로, 원본 크기, 추적 상태 저장
-
-**함수 선언:**
-- `FileSizeEntry* find_or_create_file_size_entry(const char *path)`
-- `void check_file_size_change(const char *path, off_t current_size, pid_t pid)`
-- `void update_file_size_entry_path(const char *old_path, const char *new_path)`
-
-### `pattern_detector.c`
-구간별 엔트로피 패턴 감지 모듈
-
-**주요 기능:**
-- 파일을 청크 단위로 나누어 구간별 엔트로피 분석
-- 높은 엔트로피 구간과 낮은 엔트로피 구간의 반복 패턴 감지
-- 부분 암호화 공격 탐지 (예: 10MB 암호화 → 3MB 건너뛰기 반복)
-
-**설정:**
-- `CHUNK_SIZE`: 청크 크기 (1MB = 1048576 bytes)
-- `ENTROPY_THRESHOLD`: 높은 엔트로피 임계값 (4.2)
-- `PATTERN_REPEAT_THRESHOLD`: 패턴 반복 임계값 (4회)
-- `MIN_FILE_SIZE`: 최소 분석 파일 크기 (2MB)
-
-**주요 함수:**
-- `detect_entropy_pattern(const char *file_path, int base_fd, pid_t pid)`: 구간별 엔트로피 패턴 분석 및 감지
-
-**동작 방식:**
-- 파일을 1MB 청크 단위로 읽어서 각 청크의 엔트로피 계산
-- 높은 엔트로피(≥4.2) 구간과 낮은 엔트로피 구간의 전환 횟수 카운트
-- 패턴이 4번 이상 반복되면 프로세스 강제 종료
-
-### `pattern_detector.h`
-pattern_detector.c의 헤더 파일
-
-**함수 선언:**
-- `int detect_entropy_pattern(const char *file_path, int base_fd, pid_t pid)`
-
-### `logger.c`
-로깅 시스템 모듈
-
-**주요 기능:**
-- 모든 보안 이벤트를 stderr와 로그 파일에 동시 기록
-- 타임스탬프 자동 추가
-- 형식화된 킬링 메시지 제공
-
-**설정:**
-- 기본 로그 파일 경로: `./ransomware_defense.log`
-- 환경 변수 `DEFENSE_LOG_FILE`로 커스텀 경로 설정 가능
-
-**주요 함수:**
-- `init_logger(const char *log_file_path)`: 로거 초기화
-- `close_logger(void)`: 로거 종료
-- `log_message(const char *format, ...)`: 일반 로그 메시지 출력
-- `log_kill_dummy_file(pid_t pid, const char *path)`: 더미 파일 접근 감지 로그
-- `log_kill_ransomware_extension(...)`: 랜섬웨어 확장자 감지 로그
-- `log_kill_malice_score(...)`: Malice Score 임계값 초과 로그
-- `log_kill_entropy_pattern(...)`: 구간별 엔트로피 패턴 감지 로그
-
-**로그 내용:**
-- 프로그램 시작/종료 시간
-- 모든 킬링 이벤트 (사유, PID, 파일 경로, 작업 유형)
-- 파일 크기 변화 알림
-- 타임스탬프가 포함된 모든 메시지
-
-### `logger.h`
-logger.c의 헤더 파일
-
-**함수 선언:**
-- `int init_logger(const char *log_file_path)`
-- `void close_logger(void)`
-- `void log_message(const char *format, ...)`
-- `void log_kill_dummy_file(pid_t pid, const char *path)`
-- `void log_kill_ransomware_extension(...)`
-- `void log_kill_malice_score(...)`
-- `void log_kill_entropy_pattern(...)`
-
-## 컴파일 방법
-
-```bash
-# 필요한 패키지 설치 (Ubuntu/Debian)
-sudo apt-get install libfuse3-dev pkg-config
-
-# Makefile을 사용한 컴파일
-make
-
-# 또는 직접 컴파일
-gcc -Wall -Wextra -std=c11 -g -D_GNU_SOURCE -Isrc $(pkg-config fuse3 --cflags) \
-    src/blue2.c src/analyzer.c src/entropy.c src/extension_checker.c src/file_size_tracker.c \
-    src/logger.c src/pattern_detector.c -o blue2 \
-    $(pkg-config fuse3 --libs) -lpthread -lm
-
-# 의존성 확인
-make deps
+```c
+typedef struct {
+    pid_t pid;
+    int malice_score;
+    time_t last_write_time;
+    char proc_name[32];
+} ProcessScore;
 ```
 
-**컴파일 옵션 설명:**
-- `-D_GNU_SOURCE`: POSIX 함수 및 상수 사용을 위한 매크로
-- `-Isrc`: 소스 디렉토리를 include 경로로 추가
-- `pkg-config fuse3 --cflags --libs`: FUSE3 라이브러리 컴파일/링크 옵션
-- `-lpthread`: pthread 라이브러리 링크
-- `-lm`: 수학 라이브러리 링크 (엔트로피 계산용)
+특징:
 
-## 실행 방법
+- 각 프로세스는 고유한 점수를 가짐  
+- 점수는 Analyzer가 부여  
+- 마지막 WRITE 시각(last_write_time)을 기록하여  
+  “짧은 시간 내 집중적인 연속 WRITE” 패턴 탐지 가능  
+  :contentReference[oaicite:0]{index=0}
 
-1. **백엔드 디렉터리 준비:**
-```bash
-mkdir -p ~/workspace/target
-# 테스트 파일 생성
-echo "test" > ~/workspace/target/text.txt
+PID 엔트리는 다음 함수로 생성·조회된다:
+
+```c
+static ProcessScore* find_or_create_score_entry(pid_t pid)
+```
+:contentReference[oaicite:1]{index=1}
+
+이 함수는 O(1)에 가까운 속도로 PID 테이블 접근을 제공하여  
+FUSE I/O 성능 저하를 최소화한다.
+
+---
+
+## 1-2. PPID 기반 그룹 점수 관리 (멀티프로세싱 공격 대응)
+
+```c
+typedef struct {
+    pid_t ppid;
+    int group_score;
+} PpidGroup;
+```
+:contentReference[oaicite:2]{index=2}
+
+특징:
+
+- 동일한 부모 프로세스(PPID)를 가진 모든 child들의 점수가 누적됨  
+- 랜섬웨어가 병렬로 파일을 암호화하더라도  
+  **그룹 전체 점수가 빠르게 상승**하여 즉시 차단 가능
+
+update 방식:
+
+```c
+pid_t ppid = get_ppid_of(pid);
+update_group_score(ppid, added_score);
+
+if (get_group_score(ppid) >= KILL_THRESHOLD) {
+    restore_backup_file(path, base_fd);
+    kill(pid, SIGKILL);
+    return -EIO;
+}
+```
+:contentReference[oaicite:3]{index=3}
+
+### ✔ 구현 효과
+
+- 단일 공격자 → PID 점수로 탐지  
+- 병렬 공격자 → PPID 그룹 점수로 탐지  
+- **현실 랜섬웨어 공격 패턴을 반영**
+
+---
+
+# 2. Restore Module – Copy-on-Write(CoW) 기반 자동 백업·복구
+
+Restore는 본 프로젝트의 **두 번째 핵심 기능**이다.
+
+초기 설계에서는 “모든 파일을 실행 시작 시 즉시 백업”하려 했지만,  
+다음 문제를 발견했다:
+
+- 보호 디렉터리 1GB → 백업본도 1GB 필요 (용량 2배)  
+- 초기 백업 시간 과도함  
+- 대부분의 파일이 공격받지 않음 (불필요한 백업)
+
+따라서 운영체제의 **Copy-on-Write(CoW)** 개념을 도입했다.
+
+---
+
+## 2-1. CoW 백업 – “쓰기(WRITE) 발생 시에만” 원본 백업
+
+```c
+restore_backup_on_write(path, base_fd);
 ```
 
-2. **마운트 포인트 디렉터리 생성:**
-```bash
-mkdir -p /tmp/myfs
+
+특징:
+
+- WRITE가 발생한 파일만 백업  
+- 변경되지 않은 파일은 백업하지 않음  
+- I/O 부하 및 용량 문제 해결
+
+---
+
+## 2-2. 복구는 WRITE / CREATE / UNLINK / RENAME에서만 수행
+
+불필요한 복구·백업을 모두 제거하여 성능 최적화.
+
+복구 대상 이벤트: WRITE, CREATE, UNLINK, RENAME
+임계치를 넘어 프로세스가 강제 종료 되기 전에 복구해
+강제종료가 되지 않아 계속 복구가 불가능한 상황 방지
+
+WRITE에만 백업하고,  
+위 4개 연산에서만 복구를 수행하여  
+**비용을 최소화하는 설계**이다.
+
+---
+
+## 2-3. Restore module 주요 함수 설명
+
+### ✔ restore_init()
+- 백업 디렉터리 생성 (`~/workspace/restore_backup`)  
+- realpath 변환  
+- 존재하지 않으면 mkdir + 권한 700  
+- 공격자가 접근하지 못하도록 보호  
+
+
+### ✔ restore_backup_on_write()
+- 이미 백업본 존재하면 PASS  
+- 원본 파일을 openat()으로 열어 백업본 생성  
+- 4096byte 단위로 안전하게 copy  
+
+
+### ✔ copy_file_data()
+- 파일 복사의 실제 구현부  
+- read/write 반복  
+- 오류 발생 시 즉시 중단  
+
+
+### ✔ restore_backup_file()
+- 공격 후 파일을 truncate(암호화 본문 제거)  
+- 백업본을 다시 write하여 복구  
+
+
+---
+## 3. Blue2 파일시스템의 경로 설정(main) – mountpoint & backend 구조
+
+Blue2는 FUSE 기반의 “Passthrough Filesystem” 구조를 사용하기 때문에  
+**mountpoint(사용자가 접근하는 가상 디렉터리)**와  
+**backend(실제 파일이 저장되는 실제 디렉터리)**를 명확히 분리해야 한다.
+
+이 프로젝트에서는 다음과 같은 실행 구조를 갖는다:
+
+```
+./blue2 <mountpoint> <backend_path>
 ```
 
-3. **파일시스템 마운트:**
-```bash
-./blue2 /tmp/myfs
+이를 위해 `blue2.c`의 main() 마지막 부분에서 사용자가 전달한  
+mountpoint 및 backend 경로를 다음과 같이 처리했다:
+
+```c
+if (argc < 3) {
+    fprintf(stderr, "Usage: %s <mountpoint> <backend>\n", argv[0]);
+    return -1;
+}
+
+// mountpoint 설정
+char *mountpoint = realpath(argv[1], NULL);
+if (!mountpoint) {
+    perror("realpath mountpoint");
+    return -1;
+}
+
+// backend 설정
+char backend_path[PATH_MAX];
+if (!realpath(argv[2], backend_path)) {
+    perror("realpath backend_path");
+    return -1;
+}
+
+log_message("INFO: Protecting backend path: %s\n", backend_path);
+
+// backend 디렉터리 FD 오픈
+base_fd = open(backend_path, O_RDONLY | O_DIRECTORY);
+if (base_fd == -1) {
+    perror("Error opening backend directory");
+    return -1;
+}
 ```
 
-4. **사용 예시:**
-```bash
-# 다른 터미널에서
-ls /tmp/myfs
-cat /tmp/myfs/text.txt
-echo "data" > /tmp/myfs/text.txt  # 화이트리스트 파일: 쓰기 가능
-echo "new" > /tmp/myfs/newfile.txt  # 새 파일 생성 가능 (가용성)
-rm /tmp/myfs/text.txt             # 화이트리스트 파일: 삭제 가능
-mv /tmp/myfs/text.txt /tmp/myfs/new.txt  # 이름 변경 가능
-./malware.exe  # 화이트리스트에 없는 파일: 실행 차단
-cat /tmp/myfs/dummy_secret.txt  # 더미 파일 접근 시도: 프로세스 즉시 종료
+### ✔ 설계 의도
+
+- **mountpoint는 FUSE가 오버레이되는 가상 디렉터리**  
+- **backend는 실제 파일이 저장되는 위치**  
+- Blue2는 모든 파일 연산을 mountpoint에서 가로채고  
+  backend에서 실제 파일을 읽고 쓰는 구조
+
+### ✔ 왜 mountpoint = backend가 불가능한가?
+
+FUSE는 mountpoint 위에 “가상 계층”을 덮어씌우므로  
+mountpoint와 backend를 동일하게 설정하면  
+실제 파일 접근이 불가능해지고 mount 자체가 실패한다.
+
+따라서 이 프로젝트에서는:
+
+- `mountpoint = ~/workspace/target` (공격 및 보호 대상)
+- `backend = ~/workspace/real_target` (실제 저장소)
+
+이 구조를 강제하도록 설계했다.
+
+### ✔ Restore 및 스코어링 시스템과의 연동
+
+- 모든 write/unlink/rename/create 이벤트는 mountpoint에서 발생한다.
+- Blue2는 이를 감지해 Analyzer → Process Tracker → Restore 모듈이 동작한다.
+- 실제 파일 조작은 backend에서 이루어지므로  
+  복구/백업이 안전하게 진행될 수 있다.
+
+요약하자면:
+
+```
+mountpoint = 공격이 들어오는 경로(감시 대상)
+backend     = 원본 파일을 안전히 보관하는 실제 경로
 ```
 
-5. **언마운트:**
-```bash
-fusermount -u /tmp/myfs
-```
+이 두 경로를 분리 설정하는 구조가  
+이 프로젝트 전체 동작의 근간이 된다.
 
-## 보안 메커니즘
 
-### 1. 동적 화이트리스트 시스템
-- 프로그램 시작 시 백엔드 디렉토리(`$HOME/workspace/target`)의 모든 파일을 재귀적으로 스캔하여 화이트리스트에 자동 등록
-- **화이트리스트 파일**: 모든 작업 허용 (읽기, 쓰기, 삭제, 실행, 이름변경)
-- **화이트리스트에 없는 파일**: 실행만 차단, 나머지 작업 허용 (읽기, 쓰기, 삭제, 이름변경, 생성)
-- 초기화 시점에 등록된 파일만 화이트리스트에 포함됨
-- 추후 정상 파일에 대한 가용성 수정 필요....!!!
-### 2. 더미 파일(낚시 파일) 시스템
-- 프로그램 시작 시 더미 파일 자동 생성:
-  - `/dummy_secret.txt`
-  - `/important_data.txt`
-  - `/private_key.pem`
-  - `/backup.db`
-  - `/confidential.doc`
-- 더미 파일에 대한 모든 접근 시도 시 프로세스 즉시 강제 종료:
-  - 읽기, 쓰기, 삭제, 생성, 이름변경 모두 차단
-  - 랜섬웨어가 더미 파일에 접근하면 즉시 탐지 및 차단
+# 3. 주목할 만한 포인트 요약
 
-### 3. 실행 권한 제어
-- 화이트리스트에 없는 파일의 실행 권한 자동 제거
-- `getattr` 함수에서 실행 권한 비트(`S_IXUSR`, `S_IXGRP`, `S_IXOTH`) 제거
-- 화이트리스트 파일은 실행 권한 유지
-
-### 4. PID 기반 악성 행동 추적
-- 각 프로세스별로 Malice Score 추적
-- WRITE, UNLINK, RENAME 작업에 점수 부여
-- 높은 엔트로피 데이터 감지 시 추가 점수 부여
-
-### 5. 빈도 기반 이상 탐지
-- 1초 단위로 작업 빈도 분석
-- 임계값 초과 시 추가 벌점 부여
-
-### 6. 자동 차단
-- Malice Score가 `KILL_THRESHOLD` (80점) 이상이면 즉시 프로세스 강제 종료
-- SIGKILL 신호로 프로세스 종료
-
-### 7. 랜섬웨어 확장자 감지
-- `write` 및 `rename` 함수에서 파일 확장자 검사
-- 알려진 랜섬웨어 확장자 목록과 비교 (30개 이상)
-- 랜섬웨어 확장자 발견 시 프로세스 즉시 강제 종료 (SIGKILL)
-- 대소문자 구분 없이 검사 (`strcasecmp` 사용)
-
-### 8. 파일 크기 변화 분석
-- 최대 1,000개 파일의 원본 크기 추적
-- `getattr`에서 파일의 원본 크기 저장
-- `write` 후 현재 파일 크기 확인
-- 원본 대비 크기 변화 비율 계산
-- Base64 인코딩 감지: 크기 변화 비율이 4/3배 범위 (1.23 ~ 1.43) 내이면 PID 출력
-- `rename` 시 파일 크기 추적 엔트리 경로 자동 업데이트
-
-### 9. 구간별 엔트로피 패턴 감지
-- 파일을 1MB 청크 단위로 나누어 구간별 엔트로피 분석
-- 높은 엔트로피(≥4.2) 구간과 낮은 엔트로피 구간의 반복 패턴 감지
-- 부분 암호화 공격 탐지 (예: 10MB 암호화 → 3MB 건너뛰기 반복)
-- 패턴이 4번 이상 반복되면 프로세스 강제 종료 (SIGKILL)
-- 최소 2MB 이상의 파일만 분석 (성능 최적화)
-
-### 10. 로깅 시스템
-- 모든 보안 이벤트를 로그 파일에 기록
-- 기본 로그 파일: `./ransomware_defense.log`
-- 환경 변수 `DEFENSE_LOG_FILE`로 커스텀 경로 설정 가능
-- stderr와 로그 파일에 동시 출력
-- 타임스탬프 자동 추가
-- 형식화된 킬링 메시지 제공
-
-## 설정 가능한 값
-
-### `blue2.c`
-- `MAX_TRACKED_PIDS`: 최대 추적 PID 수 (기본값: 100)
-- `KILL_THRESHOLD`: 강제 종료 임계값 (기본값: 80)
-- `MAX_WHITELIST_SIZE`: 최대 화이트리스트 항목 수 (기본값: 10000)
-- 동적 화이트리스트: 초기화 시점에 백엔드 디렉토리 스캔하여 자동 등록
-- 더미 파일 목록: 프로그램 시작 시 자동 생성 및 등록
-
-### `analyzer.c`
-- `WEIGTH_WRITE`: 쓰기 작업 점수 (기본값: 1)
-- `WEIGTH_MALICIOUS`: 악성 작업 점수 (기본값: 3)
-- `WEIGHT_HIGH_ENTROPY`: 높은 엔트로피 추가 점수 (기본값: 5)
-- `ENTROPY_THRESHOLD`: 엔트로피 임계값 (기본값: 4.2)
-- `WRITE_THRESHOLE_PER_1`: 1초당 쓰기 임계값 (기본값: 100)
-- `UNLINK_THRESHOLE_PER_1`: 1초당 삭제 임계값 (기본값: 10)
-- `RENAME_THRESHOLE_PER_1`: 1초당 이름 변경 임계값 (기본값: 10)
-- `PENALTY_HIGh_WRITE`: 쓰기 빈도 초과 벌점 (기본값: 50)
-- `PENALTY_HIGh_UNLINK`: 삭제 빈도 초과 벌점 (기본값: 100)
-- `PENALTY_HIGh_RENAME`: 이름 변경 빈도 초과 벌점 (기본값: 100)
-- `FINAL_MALICE_THRESHOLD`: 최종 악성 판정 임계값 (기본값: 200)
-
-### `extension_checker.c`
-- 랜섬웨어 확장자 목록: 30개 이상의 알려진 랜섬웨어 확장자
-- 확장자 검사는 대소문자 구분 없이 수행
-
-### `file_size_tracker.c`
-- `MAX_FILE_SIZE_TRACK`: 최대 추적 가능한 파일 수 (기본값: 1000)
-- `target_ratio`: Base64 인코딩 시 크기 증가 비율 (4.0 / 3.0 = 1.333...)
-- `tolerance`: 허용 오차 (기본값: 0.1 = 10%)
-- 크기 변화 비율 범위: 1.23 ~ 1.43 (4/3배 ± 10%)
-
-### `pattern_detector.c`
-- `CHUNK_SIZE`: 청크 크기 (기본값: 1MB = 1048576 bytes)
-- `ENTROPY_THRESHOLD`: 높은 엔트로피 임계값 (기본값: 4.2)
-- `PATTERN_REPEAT_THRESHOLD`: 패턴 반복 임계값 (기본값: 4회)
-- `MIN_FILE_SIZE`: 최소 분석 파일 크기 (기본값: 2MB)
-
-### `logger.c`
-- 기본 로그 파일 경로: `./ransomware_defense.log`
-- 환경 변수 `DEFENSE_LOG_FILE`로 커스텀 경로 설정 가능
-
-## 주의사항
-
-1. **환경 변수**: `HOME` 환경 변수가 설정되어 있어야 합니다.
-2. **백엔드 경로**: `$HOME/workspace/target` 디렉터리가 존재해야 합니다.
-3. **권한**: FUSE 파일시스템 마운트는 적절한 권한이 필요합니다.
-4. **디버깅**: `stderr`에 로그가 출력되므로 디버깅 시 확인하세요.
-
-## 알려진 제한사항
-
-1. **저엔트로피 우회**: 반복적인 패턴을 사용하면 엔트로피 기반 감지를 우회할 수 있습니다.
-2. **PID 기반 추적**: PID는 실행마다 재생성되므로, 프로세스 이름 기반 추적이 더 효과적일 수 있습니다.
-3. **화이트리스트 고정**: 초기화 시점에 등록된 파일만 화이트리스트에 포함되며, 런타임에 추가된 파일은 포함되지 않습니다.
-4. **확장자 기반 감지**: 확장자를 변경하지 않는 랜섬웨어는 감지하지 못할 수 있습니다.
-5. **파일 크기 추적**: 최대 1,000개 파일만 추적 가능하며, 그 이상의 파일은 추적되지 않습니다.
-6. **Base64 감지**: 4/3배 비율 범위를 벗어나는 인코딩 방식은 감지하지 못할 수 있습니다.
-7. **구간별 엔트로피 패턴 감지**: 2MB 미만의 파일은 분석하지 않으며, 청크 크기(1MB) 단위로만 분석합니다.
-8. **로깅**: 로그 파일이 디스크 공간을 계속 사용하므로 주기적인 정리가 필요할 수 있습니다.
-
-## 접근 제어 정책
-
-### 화이트리스트 파일
-- **모든 작업 허용**: 읽기, 쓰기, 삭제, 실행, 이름변경 모두 가능
-- 초기화 시점에 백엔드 디렉토리에 존재하던 파일만 포함
-
-### 화이트리스트에 없는 파일
-- **실행만 차단**: 실행 권한 제거
-- **나머지 작업 허용**: 읽기, 쓰기, 삭제, 이름변경, 생성 모두 가능
-- 가용성을 위해 정상 사용자/프로그램의 작업을 방해하지 않음
-
-### 더미 파일(낚시 파일)
-- **모든 접근 차단**: 읽기, 쓰기, 삭제, 생성, 이름변경 모두 차단
-- **프로세스 즉시 종료**: 더미 파일 접근 시도 시 프로세스 강제 종료
-- 랜섬웨어 탐지 및 차단 목적
-
-## 향후 개선 방향
-
-1. 프로세스 이름 기반 추적 추가
-2. 런타임 화이트리스트 동적 업데이트 기능
-3. 파일 해시 기반 검증 시스템
-4. 더 정교한 엔트로피 분석 알고리즘
-5. 실시간 로깅 및 모니터링 시스템
-6. 더미 파일 목록 커스터마이징 기능
-7. Base64 디코딩 후 엔트로피 재계산 기능
-8. 파일 크기 추적 테이블 동적 확장 기능
-9. 확장자 목록 동적 업데이트 기능
-10. 다중 레이어 엔트로피 분석 (원본 데이터와 인코딩된 데이터 모두 분석)
-11. 구간별 엔트로피 패턴 감지 정확도 향상 (더 정교한 패턴 매칭 알고리즘)
-12. 로그 파일 자동 로테이션 기능
-13. 로그 파일 압축 및 보관 기능
+- **병렬 암호화/멀티프로세싱(Ransomware)에 특화된 PPID 그룹 스코어링**
+- **Copy-on-Write 기반 백업으로 비용·용량 최적화**
+- **공격 이벤트(WRITE/CREATE/UNLINK/RENAME)에만 복구 수행 → 불필요한 오버헤드 제거**
+- **openat/fstatat 기반 안전한 파일 경로 접근**
+- **restore(복구)기능을 통해 엔트로피 계산, 화이트리스트 등의 방어 기능을 넘어 파일이 공격되더라도 원본을 백업해 잃지 않도록 함**
+- **restore 영역을 700권한으로 격리하여 랜섬웨어가 백업본 접근 불가**
+- **PID 점수 + PPID 점수의 이중 방어 구조**
 
 
