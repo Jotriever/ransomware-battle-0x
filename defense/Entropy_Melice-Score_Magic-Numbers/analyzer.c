@@ -61,30 +61,24 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
 
     // --- [1] WRITE (쓰기) 연산 분석 ---
     if (strcmp(operation, "WRITE") == 0) {
-        score_to_add += WEIGHT_WRITE; // 기본 5점 부여
+        score_to_add += WEIGHT_WRITE; // 기본 5점
 
         if (new_buf != NULL && size > 0) {
             
             double new_entropy = calculate_entropy(new_buf, size);
-            double old_entropy = 0.0;
-
-            if (old_buf_or_null != NULL) {
-                old_entropy = calculate_entropy(old_buf_or_null, size);
-            }
-
-            double delta = new_entropy - old_entropy;
             
-            // [핵심 방어 로직]
-            // 조건 1: 변화량이 3.0 이상이거나 (텍스트 -> 암호화 탐지)
-            // 조건 2: 결과물이 7.0 이상일 때 (이미지 -> 암호화 탐지)
-            if (delta > ENTROPY_DELTA_THRESHOLD || new_entropy > HIGH_ENTROPY_FLOOR) {
+            // [수정 사항] 
+            // Delta(변화량) 검사를 제거했습니다. (텍스트 파일 오탐 방지)
+            // 오직 "결과물이 암호화 데이터(7.0 이상)인가?"만 확인합니다.
+            // -> 텍스트 파일(3.5~4.5)은 여기서 바로 통과됩니다.
+            if (new_entropy > HIGH_ENTROPY_FLOOR) {
                 
-                // 오탐 방지: "엔트로피는 높지만 헤더가 정상인가?"
+                // 7.0이 넘는 고엔트로피 데이터라면, 정상 파일(JPG, ZIP)인지 신분증 검사
                 if (is_valid_file_header(new_buf, size)) {
-                    // [PASS] 정상 파일(이미지/압축)임.
+                    // [PASS] 정상 파일임. 점수 부여 안 함.
                 } 
                 else {
-                    // [BLOCK] 헤더가 없거나 깨짐 + 고엔트로피 = 암호화 데이터
+                    // [BLOCK] 엔트로피는 높은데 신분증이 없다 -> 100% 랜섬웨어!
                     score_to_add += WEIGHT_RANSOMWARE_DETECTED; // 150점 (즉시 차단)
                 }
             }
