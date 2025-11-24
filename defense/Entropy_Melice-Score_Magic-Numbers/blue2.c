@@ -1,4 +1,4 @@
-/* blue2.c (Final Version - 화이트리스트 제거) */
+/* blue2.c (Final Version - Whitelist Logic Commented Out) */
 #define FUSE_USE_VERSION 35
 #define MAX_TRACKED_PIDS 100
 #include <fuse3/fuse.h>
@@ -14,15 +14,14 @@
 #include <sys/time.h>
 #include <signal.h>
 #include <sys/types.h>
-#include "analyzer.h" // 스코어 계산 함수
-#define KILL_THRESHOLD 150    // Malice Score 강제 종료 임계값 (150점)
+#include "analyzer.h" 
+
+#define KILL_THRESHOLD 150    // 임계치 150점
 
 static int base_fd = -1;
 
-// 블랙리스트
+// 블랙리스트/화이트리스트 정의 (코드는 남겨두되 사용하지 않음)
 static const char *blacklist[] = { "/ransomware.exe", NULL };
-
-// 화이트리스트 (이제 사용 안 함)
 static const char *writable_whitelist[] = { "/text.txt", NULL };
 
 static int is_blacklisted(const char *path) {
@@ -40,14 +39,14 @@ static int is_writable_whitelisted(const char *path) {
 }
 
 typedef struct {
-    pid_t pid;
-    int malice_score;
-    time_t last_write_time;
-    char proc_name[32];
+    pid_t pid;             
+    int malice_score;      
+    time_t last_write_time; 
+    char proc_name[32];  
 } ProcessScore;
 
 ProcessScore g_score_table[MAX_TRACKED_PIDS];
-int g_process_count = 0;
+int g_process_count = 0; 
 
 ProcessScore* find_or_create_score_entry(pid_t pid) {
     for (int i = 0; i < g_process_count; i++) {
@@ -58,7 +57,7 @@ ProcessScore* find_or_create_score_entry(pid_t pid) {
         new_entry->pid = pid;
         new_entry->malice_score = 0;
         new_entry->last_write_time = time(NULL);
-        g_process_count++;
+        g_process_count++; 
         return new_entry;
     }
     fprintf(stderr, "오류: 최대 PID 추적 개수 초과!\n");
@@ -69,14 +68,14 @@ void update_malice_score(pid_t pid, int added_score) {
     ProcessScore *entry = find_or_create_score_entry(pid);
     if (entry) {
         entry->malice_score += added_score;
-        entry->last_write_time = time(NULL);
+        entry->last_write_time = time(NULL); 
     }
 }
 
 int get_malice_score(pid_t pid) {
     ProcessScore *entry = find_or_create_score_entry(pid);
     if (entry) return entry->malice_score;
-    return 0;
+    return 0; 
 }
 
 void reset_malice_score(pid_t pid) {
@@ -93,13 +92,17 @@ static void get_relative_path(const char *path, char *relpath) {
     }
 }
 
+// --- FUSE Functions ---
+
 // getattr
 static int myfs_getattr(const char *path, struct stat *stbuf,
                         struct fuse_file_info *fi) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("GETATTR",NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'GETATTR' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -112,12 +115,14 @@ static int myfs_getattr(const char *path, struct stat *stbuf,
     get_relative_path(path, relpath);
     res = fstatat(base_fd, relpath, stbuf, AT_SYMLINK_NOFOLLOW);
     if (res == -1) return -errno;
-
+    
+    /* [블랙리스트 차단 로직 주석 처리]
     if ((stbuf->st_mode & S_IFREG) && (stbuf->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
         if (is_blacklisted(path)) {
             stbuf->st_mode &= ~(S_IXUSR | S_IXGRP | S_IXOTH);
         }
     }
+    */
     return 0;
 }
 
@@ -125,10 +130,12 @@ static int myfs_getattr(const char *path, struct stat *stbuf,
 static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                         off_t offset, struct fuse_file_info *fi,
     			enum fuse_readdir_flags flags) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("READDIR",NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'READDIR' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -158,17 +165,19 @@ static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 // open
 static int myfs_open(const char *path, struct fuse_file_info *fi) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("OPEN",NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'OPEN' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
             return -EIO;
     }
     
-    /* [화이트리스트 제거]
+    /* [화이트리스트 검사 주석 처리] - 이제 모든 파일 열기 허용
     if ((fi->flags & O_WRONLY) || (fi->flags & O_RDWR)) {
         if (!is_writable_whitelisted(path)) return -EACCES;
     }
@@ -185,17 +194,19 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
 
 // create
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("CREATE", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'CREATE' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
             return -EIO;
     }
 
-    /* [화이트리스트 제거]
+    /* [화이트리스트 검사 주석 처리] - 이제 모든 파일 생성 허용
     if (!is_writable_whitelisted(path)) {
         return -EACCES;
     }
@@ -213,10 +224,12 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 // read
 static int myfs_read(const char *path, char *buf, size_t size, off_t offset,
                      struct fuse_file_info *fi) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("READ", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
         fprintf(stderr, "[KILL] 'READ' 임계값 초과! PID %d 강제종료\n", current_pid);
         if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -232,8 +245,7 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset,
 // write
 static int myfs_write(const char *path, const char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi) {
-    
-    /* [화이트리스트 제거]
+    /* [화이트리스트 검사 주석 처리] - 이제 모든 파일 쓰기 허용
     if (!is_writable_whitelisted(path)) {
         return -EACCES;
     }
@@ -244,17 +256,20 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     char *old_buf = NULL;
     int added_score = 0;
 
+    // [엔트로피 변화량 계산을 위한 기존 데이터 읽기]
     if (size > 0) {
         old_buf = malloc(size);
         if (old_buf == NULL) {
             fprintf(stderr, "메모리 할당 실패\n");
             return -ENOMEM;
         }
-
+        
         ssize_t read_bytes = pread(fi->fh, old_buf, size, offset);
         if(read_bytes >= 0){
+            // 읽기 성공: 기존 데이터(old_buf)와 새 데이터(buf) 비교
             added_score = get_score("WRITE", buf, old_buf, size);
         } else {
+            // 읽기 실패(새 파일 등): 새 데이터(buf)만 검사
             added_score = get_score("WRITE", buf, NULL, size);
         }
         free(old_buf);
@@ -291,16 +306,18 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
 
 // unlink
 static int myfs_unlink(const char *path) {
-    /* [화이트리스트 제거]
+    /* [화이트리스트 검사 주석 처리] - 이제 모든 파일 삭제 허용 (하지만 점수는 쌓임)
     if (!is_writable_whitelisted(path)) {
         return -EACCES;
     }
     */
 
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("UNLINK", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
 	    fprintf(stderr, "[KILL] 'unlink' 임계값 초과! PID %d 강제종료\n", current_pid);
 	    if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -316,10 +333,12 @@ static int myfs_unlink(const char *path) {
 
 // mkdir
 static int myfs_mkdir(const char *path, mode_t mode) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("MKDIR", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'MKDIR' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -335,10 +354,12 @@ static int myfs_mkdir(const char *path, mode_t mode) {
 
 // rmdir
 static int myfs_rmdir(const char *path) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("RMDIR", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'RMDIR' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -354,16 +375,18 @@ static int myfs_rmdir(const char *path) {
 
 // rename
 static int myfs_rename(const char *from, const char *to, unsigned int flags) {
-    /* [화이트리스트 제거]
+    /* [화이트리스트 검사 주석 처리]
     if (!is_writable_whitelisted(to)) {
         return -EACCES;
     }
     */
 
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("RENAME", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'RENAME' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -383,10 +406,12 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
 // utimens
 static int myfs_utimens(const char *path, const struct timespec tv[2],
                         struct fuse_file_info *fi) {
+    // [탐지 로직]
     struct fuse_context *context = fuse_get_context();
     pid_t current_pid = context->pid;
     int added_score = get_score("UTIMENS", NULL, NULL, 0);
     update_malice_score(current_pid, added_score);
+    
     if(get_malice_score(current_pid) >= KILL_THRESHOLD) {
             fprintf(stderr, "[KILL] 'UTIMENS' 임계값 초과! PID %d 강제종료\n", current_pid);
             if(kill(current_pid,SIGKILL) == -1) fprintf(stderr, " 킬명령어 실패:%s\n", strerror(errno));
@@ -404,7 +429,6 @@ static int myfs_utimens(const char *path, const struct timespec tv[2],
     return 0;
 }
 
-// 연산자 구조체
 static const struct fuse_operations myfs_oper = {
     .getattr    = myfs_getattr,
     .readdir    = myfs_readdir,
@@ -420,7 +444,6 @@ static const struct fuse_operations myfs_oper = {
     .utimens    = myfs_utimens,
 };
 
-// main
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     if (argc < 2) {
