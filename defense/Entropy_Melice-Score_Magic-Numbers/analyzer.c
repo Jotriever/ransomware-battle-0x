@@ -50,8 +50,15 @@ int is_valid_file_header(const char *buf, size_t size) {
 
     // 4. 실행 파일 (ELF)
     if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1;
+    // [추가] Windows 실행 파일 (.exe, .dll) 
+    if (size >= 2 && memcmp(buf, "MZ", 2) == 0) return 1;
+    // Linux (.o, 실행파일)
+    if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1;
 
-    return 0; 
+    // 5. 데이터 베이스 SQLite (.db, .sqlite, .sqlite3) (문자열 "SQLite format 3"로 시작함) [추가]
+    if (size >= 16 && memcmp(buf, "SQLite format 3", 15) == 0) return 1;
+
+    return 0; //헤더 없음
 }
 
 
