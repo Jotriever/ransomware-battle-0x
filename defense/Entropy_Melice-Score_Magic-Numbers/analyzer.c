@@ -75,9 +75,9 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
             double new_entropy = calculate_entropy(new_buf, size);
             
             // [수정 사항] 
-            // Delta(변화량) 검사를 제거했습니다. (텍스트 파일 오탐 방지)
-            // 오직 "결과물이 암호화 데이터(7.0 이상)인가?"만 확인합니다.
-            // -> 텍스트 파일(3.5~4.5)은 여기서 바로 통과됩니다.
+            // Delta(변화량) 검사를 제거함함 (텍스트 파일 오탐 방지)
+            // 오직 "결과물이 암호화 데이터(7.0 이상)인가?"만 확인
+            // -> 텍스트 파일(3.5~4.5)은 여기서 바로 통과
             if (new_entropy > HIGH_ENTROPY_FLOOR) {
                 
                 // 7.0이 넘는 고엔트로피 데이터라면, 정상 파일(JPG, ZIP)인지 신분증 검사
