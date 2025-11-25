@@ -5,13 +5,10 @@
 #include <stddef.h>  // size_t 타입 사용
 
 /**
- * @brief 데이터 버퍼의 섀넌 엔트로피(Shannon Entropy)를 계산합니다.
- * * 엔트로피는 데이터의 무작위성을 나타내는 지표로, 0.0 ~ 8.0 사이의 값을 가집니다.
- * - 0.0에 가까움: 데이터에 패턴이 많음 (예: 텍스트 파일, 소스 코드)
- * - 8.0에 가까움: 데이터가 무작위함 (예: 암호화된 파일, 압축 파일)
- * * @param buffer 엔트로피를 계산할 데이터 (바이트 배열)
- * @param size   데이터의 크기 (바이트 수)
- * @return double 계산된 엔트로피 값
+ * 데이터 버퍼의 섀넌 엔트로피(Shannon Entropy)를 계산
+ * *buffer 엔트로피를 계산할 데이터 (바이트 배열)
+ * size   데이터의 크기 (바이트 수)
+ * return double 계산된 엔트로피 값
  */
 double calculate_entropy(const char *buffer, size_t size) {
     
