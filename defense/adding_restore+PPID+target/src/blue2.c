@@ -22,7 +22,7 @@
 #include "file_size_tracker.h" // 파일 크기 추적 모듈
 #include "logger.h" // 로깅 모듈
 #include "pattern_detector.h" // 패턴 감지 모듈
-#define KILL_THRESHOLD 100 //malice_score 임계값 (넘으면 강제 종료됨)   
+#define KILL_THRESHOLD 150 //malice_score 임계값 (넘으면 강제 종료됨)   
 
 static int base_fd = -1;
 
