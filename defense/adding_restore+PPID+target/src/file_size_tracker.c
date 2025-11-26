@@ -67,8 +67,15 @@ int check_file_size_change(const char *path, off_t current_size, pid_t pid) {
         return 1; // 의심
     }
 
+    // [추가] 파일 사이즈 작아지는 지 탐지 탐지 (갑자기 작아지는 것)
+    // 예: 원래 크기의 10% 미만으로 줄어들면 "파괴 행위"로 간주
+    if (entry->original_size > 1024 && ratio < 0.1) {
+        log_message("[DETECT] 파일 파괴(Wiper) 의심 (비율 급감): %s (%.1f%%)\n", path, ratio*100);
+        return 1; // 차단!
+    }
+
     return 0; // 정상
-        
+    
 }
 
 // 파일 경로 업데이트 (rename 시 사용)
