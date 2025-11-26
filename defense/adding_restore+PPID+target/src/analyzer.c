@@ -1,27 +1,18 @@
+/* analyzer.c (Final Fixed Version) */
 #include "entropy.h"
 #include "analyzer.h"
 #include <string.h> // strcmp, memcmp
 #include <stddef.h> // size_t, NULL
 #include <stdio.h> 
 
-// --- 1. 가중치 설정 (Weight Configuration) ---/
-
 // --- 1. 내용 기반 가중치 (Content-based) ---
 #define WEIGHT_WRITE 5           // 기본 쓰기 5점 
 #define WEIGHT_HIGH_ENTROPY 20   // 20점 부여함
-#define ENTROPY_THRESHOLD 4.3    //(교수님 자료에 암호화전 읽기/쓰기 상황의 엔트로피>가 4.3 이하였던 것에 근거함))
-
-
-// 🔥 추가된 상수 (컴파일 오류 해결용)
-#define HIGH_ENTROPY_FLOOR 7.0
-#define WEIGHT_RANSOMWARE_DETECTED 150
+#define ENTROPY_THRESHOLD 4.3    
 
 // --- 2. 행위 기반 가중치 (Behavior-based) ---
 #define WEIGHT_MALICIOUS 20      // 삭제/변경 20점 (고위험)
-#define WEIGHT_MALICIOUS_LOW 2   // 정찰 행위 2점 (저위험) 
-
-// [유지]평소에 자주하는 정찰 행위인 파일을 읽거나(read), 정보를 보는 것(getattr)은 너무 높이면 'ls' 명령어도 막히므로 2점 유>지
-#define WEIGHT_MALICIOUS_LOW 2   
+#define WEIGHT_MALICIOUS_LOW 1   // 정찰 행위 1점 (저위험)
 
 // --- 3. 맥락 기반 가중치 (Context-based) ---
 #define WEIGHT_LARGE_WRITE 150   // 대용량 쓰기 즉시 차단
@@ -29,18 +20,46 @@
 
 // --- 4. 암호화 탐지 가중치 (Entropy-based) ---
 #define WEIGHT_RANSOMWARE_DETECTED 150 // 랜섬웨어 탐지 시 즉시 차단
-#define ENTROPY_DELTA_THRESHOLD 3.0    // 엔트로피 변화량 기준
+#define ENTROPY_DELTA_THRESHOLD 3.0    // (사용 안 함)
 #define HIGH_ENTROPY_FLOOR 7.0         // 암호화 의심 기준선 (7.0 이상)
 
+
+/**
+ * @brief 저엔트로피 우회(Wiper) 공격 탐지를 위한 고유 바이트 계수 함수
+ * (0000... 이나 AAAA... 같은 단순 반복 데이터를 잡아냄)
+ * [수정] get_score 함수보다 먼저 정의되어야 합니다.
+ */
+int count_unique_bytes(const char *buf, size_t size) {
+    int seen[256] = {0};
+    int unique = 0;
+
+    // 전체를 다 검사하면 느릴 수 있으므로, 앞부분 4KB만 검사해도 충분함
+    size_t check_size = (size > 4096) ? 4096 : size;
+
+    for (size_t i = 0; i < check_size; i++) {
+        unsigned char b = (unsigned char)buf[i];
+        if (!seen[b]) {
+            seen[b] = 1;
+            unique++;
+            if (unique > 4) return unique; // 4개 넘으면 정상 파일로 간주 (빠른 리턴)
+        }
+    }
+    return unique;
+}
+
+
+/**
+ * @brief 파일 헤더(Magic Number) 검사 함수
+ */
 int is_valid_file_header(const char *buf, size_t size) {
-    if (size < 4) return 0;
+    if (size < 4) return 0; 
 
     // 1. 이미지 (JPG, PNG, GIF, BMP, TIF)
-    if (size >= 3 && memcmp(buf, "\xFF\xD8\xFF", 3) == 0) return 1; // JPG
-    if (size >= 4 && memcmp(buf, "\x89\x50\x4E\x47", 4) == 0) return 1; // PNG
-    if (size >= 6 && (memcmp(buf, "GIF87a", 6) == 0 || memcmp(buf, "GIF89a", 6) == 0)) return 1; // GIF
-    if (size >= 2 && memcmp(buf, "BM", 2) == 0) return 1; // BMP
-    if (size >= 4 && (memcmp(buf, "II*\x00", 4) == 0 || memcmp(buf, "MM\x00*", 4) == 0)) return 1; // TIF
+    if (size >= 3 && memcmp(buf, "\xFF\xD8\xFF", 3) == 0) return 1;
+    if (size >= 4 && memcmp(buf, "\x89\x50\x4E\x47", 4) == 0) return 1;
+    if (size >= 6 && (memcmp(buf, "GIF87a", 6) == 0 || memcmp(buf, "GIF89a", 6) == 0)) return 1;
+    if (size >= 2 && memcmp(buf, "BM", 2) == 0) return 1;
+    if (size >= 4 && (memcmp(buf, "II*\x00", 4) == 0 || memcmp(buf, "MM\x00*", 4) == 0)) return 1;
 
     // 2. 문서 및 압축 (ZIP, Office, APK, JAR)
     if (size >= 2 && memcmp(buf, "PK", 2) == 0) return 1;
@@ -55,20 +74,18 @@ int is_valid_file_header(const char *buf, size_t size) {
     if (size >= 3 && memcmp(buf, "ID3", 3) == 0) return 1;
     if (size >= 2 && (unsigned char)buf[0] == 0xFF && ((unsigned char)buf[1] & 0xE0) == 0xE0) return 1;
 
- // 4. 실행 파일 (ELF)
-    if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1;
-    // [추가] Windows 실행 파일 (.exe, .dll) 
-    if (size >= 2 && memcmp(buf, "MZ", 2) == 0) return 1;
-    // Linux (.o, 실행파일)
-    if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1;
+    // 4. 실행 파일 & DB
+    if (size >= 4 && memcmp(buf, "\x7F\x45\x4C\x46", 4) == 0) return 1; // ELF
+    if (size >= 2 && memcmp(buf, "MZ", 2) == 0) return 1; // Windows .exe
+    if (size >= 16 && memcmp(buf, "SQLite format 3", 15) == 0) return 1; // SQLite
 
-    // 5. 데이터 베이스 SQLite (.db, .sqlite, .sqlite3) (문자열 "SQLite format 3"로 시작함) [추가]
-    if (size >= 16 && memcmp(buf, "SQLite format 3", 15) == 0) return 1;
-
-    return 0; //헤더 없음
+    return 0; 
 }
 
 
+/**
+ * @brief FUSE 연산을 분석하여 악성 점수 반환
+ */
 int get_score(const char* operation, const char* new_buf, const char* old_buf_or_null, size_t size) {
     int score_to_add = 0;
 
@@ -78,16 +95,17 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
 
         if (new_buf != NULL && size > 0) {
             
-            // 1. "새로 쓰려는" 데이터의 엔트로피 계산
-            double new_entropy = calculate_entropy(new_buf, size);
-            
-	    if (new_buf != NULL && size >= (1 * 1024 * 1024)) {  // 1MB 이상
+            // [추가된 방어] 저엔트로피 우회(Wiper) 탐지
+            // 1MB 이상 쓰는데 고유 문자가 2개 이하라면? (예: 0000... 또는 AAAA...)
+            if (size >= (1 * 1024 * 1024)) {
                 int uniq = count_unique_bytes(new_buf, size);
                 if (uniq <= 2) {
-                // 기존 가중치 변경 금지 → 새 탐지만 추가
-                    score_to_add += WEIGHT_RANSOMWARE_DETECTED;
-    }
-}
+                     score_to_add += WEIGHT_RANSOMWARE_DETECTED; // 150점 (즉시 차단)
+                }
+            }
+
+            // 기존 엔트로피 분석
+            double new_entropy = calculate_entropy(new_buf, size);
             
             // "결과물이 암호화 데이터(7.0 이상)인가?" 확인
             if (new_entropy > HIGH_ENTROPY_FLOOR) {
@@ -116,7 +134,6 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     // --- [3] 저위험 정찰 행위 (읽기/탐색) ---
     else if (strcmp(operation, "READ") == 0 ||
              strcmp(operation, "OPEN") == 0 ||
-            // strcmp(operation, "GETATTR") == 0 || getattr 때문에 마운트시 자꾸 강제종료 당함
              strcmp(operation, "READDIR") == 0) {
         score_to_add += WEIGHT_MALICIOUS_LOW; // 2점
     
@@ -129,19 +146,4 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     }
 
     return score_to_add;
-}
-
-int count_unique_bytes(const char *buf, size_t size) {
-    int seen[256] = {0};
-    int unique = 0;
-
-    for (size_t i = 0; i < size; i++) {
-        unsigned char b = (unsigned char)buf[i];
-        if (!seen[b]) {
-            seen[b] = 1;
-            unique++;
-            if (unique > 4) return unique; // 4개 넘으면 더 셀 필요 없음
-        }
-    }
-    return unique;
 }
