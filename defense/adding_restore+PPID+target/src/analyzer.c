@@ -116,7 +116,7 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     // --- [3] 저위험 정찰 행위 (읽기/탐색) ---
     else if (strcmp(operation, "READ") == 0 ||
              strcmp(operation, "OPEN") == 0 ||
-             strcmp(operation, "GETATTR") == 0 ||
+            // strcmp(operation, "GETATTR") == 0 || getattr 때문에 마운트시 자꾸 강제종료 당함
              strcmp(operation, "READDIR") == 0) {
         score_to_add += WEIGHT_MALICIOUS_LOW; // 2점
     
