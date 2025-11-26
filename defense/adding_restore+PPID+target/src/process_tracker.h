@@ -34,6 +34,9 @@ int get_group_score(pid_t ppid);
 void update_group_score(pid_t ppid, int added_score);
 void reset_group_score(pid_t ppid);
 pid_t get_ppid_of(pid_t pid);
+//동일 ppid를 가진 모든 자식 pid를 종료하는 함수 
+void kill_all_children(pid_t ppid);
+
 
 #endif // PROCESS_TRACKER_H
 

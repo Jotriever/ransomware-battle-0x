@@ -4,6 +4,9 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <signal.h>
+#include <stdlib.h>
 
 
 // 전역 Score 테이블
@@ -160,5 +163,40 @@ void reset_group_score(pid_t ppid) {
     if (entry) entry->group_score = 0;
 }
 
+// 동일한 PPID를 가진 모든 자식 PID를 종료하는 함수
+void kill_all_children(pid_t ppid) {
+    DIR *dir = opendir("/proc");
+    if (!dir) return;
+
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL) {
+        int pid = atoi(entry->d_name);
+        if (pid <= 0) continue;
+
+        char status_path[256];
+        snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
+
+        FILE *fp = fopen(status_path, "r");
+        if (!fp) continue;
+
+        char buf[256];
+        pid_t found_ppid = -1;
+
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strncmp(buf, "PPid:", 5) == 0) {
+                sscanf(buf + 5, "%d", &found_ppid);
+                break;
+            }
+        }
+        fclose(fp);
+
+        if (found_ppid == ppid) {
+            kill(pid, SIGKILL);
+        }
+    }
+
+    closedir(dir);
+}
 
 

@@ -80,10 +80,16 @@ static int myfs_getattr(const char *path, struct stat *stbuf,
 	
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=GETATTR)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "GETATTR", NULL);
-        reset_group_score(ppid);
-        reset_malice_score(current_pid);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
         if (kill(current_pid, SIGKILL) == -1)
             log_message("킬명령어 실패: %s\n", strerror(errno));
+        
+        reset_group_score(ppid);
+        reset_malice_score(current_pid);
         return -EIO;
     }
 
@@ -142,10 +148,16 @@ static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     if (group_score >= KILL_THRESHOLD) {
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=READDIR)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "READDIR", NULL);
-        reset_group_score(ppid);
-        reset_malice_score(current_pid);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
         if (kill(current_pid, SIGKILL) == -1)
             log_message("킬명령어 실패: %s\n", strerror(errno));
+        
+        reset_group_score(ppid);
+        reset_malice_score(current_pid);
         return -EIO;
     }
     
@@ -209,10 +221,16 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
     	
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=OPEN)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "OPEN", NULL);
-        reset_group_score(ppid);
-        reset_malice_score(current_pid);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
         if (kill(current_pid, SIGKILL) == -1)
             log_message("킬명령어 실패: %s\n", strerror(errno));
+        
+        reset_group_score(ppid);
+        reset_malice_score(current_pid);
         return -EIO;
     }
 
@@ -267,10 +285,16 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     if (group_score >= KILL_THRESHOLD) {
     	log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "CREATE", NULL);
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=CREATE)\n", ppid, group_score);
-        reset_group_score(ppid);
-        reset_malice_score(current_pid);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
         if (kill(current_pid, SIGKILL) == -1)
             log_message("킬명령어 실패: %s\n", strerror(errno));
+        
+        reset_group_score(ppid);
+        reset_malice_score(current_pid);
         return -EIO;
     }
 
@@ -323,10 +347,16 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset,
 
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=READ)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "READ", NULL);
-        reset_group_score(ppid);
-        reset_malice_score(current_pid);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
         if (kill(current_pid, SIGKILL) == -1)
             log_message("킬명령어 실패: %s\n", strerror(errno));
+        
+        reset_group_score(ppid);
+        reset_malice_score(current_pid);
         return -EIO;
     }
     
@@ -429,11 +459,16 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     	restore_backup_file(path, base_fd);
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=WRITE)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "WRITE", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
     
@@ -452,7 +487,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         if (check_file_size_change(path, st.st_size, current_pid)) {
         // 1) 복구
         restore_backup_file(path, base_fd);
-        log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "WRITE", NULL);
+        log_kill_file_size_change(current_pid, pid_score, st.original_size, st.st_size, double ratio)
         // 2) kill
         if (kill(current_pid, SIGKILL) == -1) {
             log_message("킬 명령어 실패: %s\n", strerror(errno));
@@ -466,7 +501,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     // 구간별 엔트로피 패턴 감지
     if (detect_entropy_pattern(path, base_fd, current_pid)) {
         restore_backup_file(path, base_fd);
-        log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "WRITE", NULL);
+        log_kill_entropy_pattern(current_pid, pid_score, int pattern_count, int threshold)
         if (kill(current_pid, SIGKILL) == -1) {
             log_message("킬 명령어 실패: %s\n", strerror(errno));
         }
@@ -494,7 +529,7 @@ static int myfs_unlink(const char *path) {
     if (!is_writable_whitelisted(path)) {
         return -EACCES; 
     }
-    
+    restore_backup_on_write(path, base_fd);
     struct fuse_context *context = fuse_get_context();
     if (context == NULL) {
         return -EIO;
@@ -524,11 +559,16 @@ static int myfs_unlink(const char *path) {
     	restore_backup_file(path, base_fd);
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=UNLINK)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "UNLINK", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
 
@@ -570,11 +610,16 @@ static int myfs_mkdir(const char *path, mode_t mode) {
     	
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=MKDIR)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "MKDIR", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
 
@@ -616,11 +661,16 @@ static int myfs_rmdir(const char *path) {
     	
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=RMDIR)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "RMDIR", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
 
@@ -678,11 +728,16 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     	restore_backup_file(from, base_fd);
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=RENAME)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, from, "RENAME", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
 
@@ -733,11 +788,16 @@ static int myfs_utimens(const char *path, const struct timespec tv[2],
     	
         log_message("그룹 임계치 초과: PPID=%d Score=%d (함수=UTIMENS)\n", ppid, group_score);
         log_kill_malice_score(current_pid, pid_score, KILL_THRESHOLD, path, "UTIMENS", NULL);
+        // 동일한 PPID 가진 모든 child kill
+        kill_all_children(ppid);
+        // 부모 kill (공격자 bash 터미널 죽음)
+        kill(ppid, SIGKILL);
+        // 현재도 kill
+        if (kill(current_pid, SIGKILL) == -1)
+            log_message("킬명령어 실패: %s\n", strerror(errno));
+        
         reset_group_score(ppid);
         reset_malice_score(current_pid);
-        if (kill(current_pid, SIGKILL) == -1) {
-            log_message("킬 명령어 실패: %s\n", strerror(errno));
-        }
         return -EIO;
     }
 
@@ -776,11 +836,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s <mountpoint>\n", argv[0]);
         return -1;
     }
-    //char *mountpoint = realpath(argv[argc - 1], NULL);
-    //if (mountpoint == NULL) {
-    //    perror("realpath");
-     //   return -1;
-    //}
+    
     // mountpoint = backend 동시에 사용
     char *mountpoint = realpath(argv[argc-1], NULL);
     if (!mountpoint) {
@@ -788,38 +844,18 @@ int main(int argc, char *argv[]) {
         return -1;
     }
     
-    /* if (argc < 3) {
-    	fprintf(stderr, "Usage: %s <backend_dir> <mountpoint>\n", argv[0]);
-    	return -1;
-}
-
-	// backend path (원본 파일 위치)
-	char backend_path[PATH_MAX];
-	realpath(argv[1], backend_path);
-
-	// mountpoint path
-	char *mountpoint = realpath(argv[2], NULL);
-	if (mountpoint == NULL) {
-    		perror("mountpoint realpath");
-   		return -1;
-} */
-	
-
-    /*char backend_path[PATH_MAX];
-    snprintf(backend_path, PATH_MAX, "%s/workspace/target", home_dir);
-    
-    // 로거 초기화
+    //로거 초기화
     if (init_logger(NULL) != 0) {
         fprintf(stderr, "Warning: Logger initialization failed\n");
     }
     
-    log_message("INFO: Protecting backend path: %s\n", backend_path);
-    */
+    //log_message("INFO: Protecting backend path: %s\n", backend_path);
+    
     base_fd = open(mountpoint, O_RDONLY | O_DIRECTORY);
     if (base_fd == -1) {
 	perror("open");
 	free(mountpoint);
-	//close_logger();
+	close_logger();
 	return -1;
     }
     

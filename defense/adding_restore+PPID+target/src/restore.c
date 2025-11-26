@@ -13,7 +13,9 @@
 //백업dir 절대 주소(restore_init이 생성한) 저장
 static char g_backup_dir[PATH_MAX] = {0};
 static int copy_file_data(int src_fd, int dest_fd);
-
+//백업 여부 기억
+static char backup_created_for[256][PATH_MAX];
+static int backup_created_count = 0;
 
 // 백업 경로 설정 및 생성 함수 (초기화)
 int restore_init(const char *home_dir, const char *target_path) {
@@ -52,6 +54,24 @@ int restore_init(const char *home_dir, const char *target_path) {
     return 0;
 }
 
+// 이미 백업한 파일인지 확인
+static int has_backup_for(const char *filename) {
+    for (int i = 0; i < backup_created_count; i++) {
+        if (strcmp(backup_created_for[i], filename) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+// 백업 파일 이름 등록
+static void mark_backup_created(const char *filename) {
+    if (!has_backup_for(filename)) {
+        strncpy(backup_created_for[backup_created_count], filename, PATH_MAX - 1);
+        backup_created_for[backup_created_count][PATH_MAX - 1] = '\0';
+        backup_created_count++;
+    }
+}
+
 // 백업파일 생성
 void restore_backup_on_write(const char *path, int base_fd) {
     //루트 디렉토리(/)자체는 백업하지 않게 함
@@ -75,6 +95,8 @@ void restore_backup_on_write(const char *path, int base_fd) {
     if (stat(backup_filepath, &st) != -1) {
         return;
 }
+    // 이미 백업한 파일이면 rename 여부와 관계없이 재백업 금지
+    if (has_backup_for(filename)) return;
 
     //백업 시작(시간 측정 확인)
     struct timeval start_time, end_time;
@@ -226,3 +248,4 @@ static int copy_file_data(int src_fd, int dest_fd) {
     
     return 0; 
 }
+
