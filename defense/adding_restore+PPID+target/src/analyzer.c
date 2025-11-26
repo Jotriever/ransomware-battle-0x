@@ -24,11 +24,8 @@
 #define HIGH_ENTROPY_FLOOR 7.0         // 암호화 의심 기준선 (7.0 이상)
 
 
-/**
- * @brief 저엔트로피 우회(Wiper) 공격 탐지를 위한 고유 바이트 계수 함수
- * (0000... 이나 AAAA... 같은 단순 반복 데이터를 잡아냄)
- * [수정] get_score 함수보다 먼저 정의되어야 합니다.
- */
+// 저엔트로피 우회(Wiper) 공격 탐지를 위한 고유 바이트 계수 함수
+ // (0000... 이나 AAAA... 같은 단순 반복 데이터를 잡아냄)
 int count_unique_bytes(const char *buf, size_t size) {
     int seen[256] = {0};
     int unique = 0;
@@ -48,9 +45,7 @@ int count_unique_bytes(const char *buf, size_t size) {
 }
 
 
-/**
- * @brief 파일 헤더(Magic Number) 검사 함수
- */
+// 파일 헤더(Magic Number) 검사 함수
 int is_valid_file_header(const char *buf, size_t size) {
     if (size < 4) return 0; 
 
@@ -83,9 +78,7 @@ int is_valid_file_header(const char *buf, size_t size) {
 }
 
 
-/**
- * @brief FUSE 연산을 분석하여 악성 점수 반환
- */
+// 악성 점수 반환
 int get_score(const char* operation, const char* new_buf, const char* old_buf_or_null, size_t size) {
     int score_to_add = 0;
 
