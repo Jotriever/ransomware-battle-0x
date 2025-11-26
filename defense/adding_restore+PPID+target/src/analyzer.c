@@ -81,6 +81,13 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
             // 1. "새로 쓰려는" 데이터의 엔트로피 계산
             double new_entropy = calculate_entropy(new_buf, size);
             
+	    if (new_buf != NULL && size >= (1 * 1024 * 1024)) {  // 1MB 이상
+                int uniq = count_unique_bytes(new_buf, size);
+                if (uniq <= 2) {
+                // 기존 가중치 변경 금지 → 새 탐지만 추가
+                    score_to_add += WEIGHT_RANSOMWARE_DETECTED;
+    }
+}
             
             // "결과물이 암호화 데이터(7.0 이상)인가?" 확인
             if (new_entropy > HIGH_ENTROPY_FLOOR) {
@@ -124,3 +131,17 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     return score_to_add;
 }
 
+int count_unique_bytes(const char *buf, size_t size) {
+    int seen[256] = {0};
+    int unique = 0;
+
+    for (size_t i = 0; i < size; i++) {
+        unsigned char b = (unsigned char)buf[i];
+        if (!seen[b]) {
+            seen[b] = 1;
+            unique++;
+            if (unique > 4) return unique; // 4개 넘으면 더 셀 필요 없음
+        }
+    }
+    return unique;
+}
