@@ -1,3 +1,12 @@
+역할 분담
+조현수 / 팀장 / 소프트웨어학과 / 공격 테스트 코드 제작 및 방어 기능 제작
+서재린 / 팀원 / 사이버보안학과 / 엔트로피 기반 방어 및 행위 누적 점수 방어 기능 제작
+이은지 / 팀원 / 사이버보안학과 / 복구 & P(P)ID 기반 방어 기능 제작 및 형상관리 
+ 
+----------
+
+기능 간략 설명
+
 1. analyzer.c : 행위 분석 모듈
 파일 시스템에서 발생하는 모든 연산의 위험도를 수치화하여 악성 여부를 판단
 
@@ -123,8 +132,19 @@ A. 주요 기능 및 로직
 
 12.logger.c : 감사 및 로깅 모듈
 
+//주목할 점
 A. 주요 기능 및 로직
 1)보안 이벤트 기록: 악성 행위 탐지, 프로세스 차단, 파일 복구 등 시스템의 모든 보안 이벤트를 로그 파일(ransomware_defense.log)에 기록
 
 B. 보안적 의의
-공격 발생 시 사후 분석(Forensics)을 위한 증거 데이터를 제공하며, 시스템 관리자가 방어 현황을 모니터링할 수 있게함
+공격 발생 시 사후 분석(Forensics)을 위한 증거 데이터를 제공하며, 시스템 관리자가 방어 현황을 모니터링할 수 있게 함
+
+----------
+
+실행 방법
+
+## 1. 사전 준비 : 시스템이 작동할 'Backend'와 'Mountpoint' 디렉터리를 생성
+
+## 2. 빌드 : gcc blue2.c analyzer.c entropy.c restore.c file_size_tracker.c dummy_file.c pattern_detector.c extension_checker.c process_tracker.c logger.c whitelist.c blacklist.c -o my_ransom_guard -lfuse3 -lm
+
+## 3. 실행 : ./blue2 -f target
