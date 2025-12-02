@@ -130,9 +130,7 @@ int get_score(const char* operation, const char* new_buf, const char* old_buf_or
     } 
     // --- [3] 저위험 정찰 행위 (읽기/탐색) ---
     else if (strcmp(operation, "READ") == 0 ||
-             strcmp(operation, "OPEN") == 0 ||
-             strcmp(operation, "READDIR") == 0 ||
-             strcmp(operation, "GETATTR") == 0) {
+             strcmp(operation, "OPEN") == 0  ) {
         score_to_add += WEIGHT_MALICIOUS_LOW; // 1점
     
     // --- [4] 기타 조작 행위 ---
